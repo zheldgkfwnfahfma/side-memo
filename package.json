@@ -1,7 +1,7 @@
 {
   "name": "side-memo",
   "productName": "사이드 메모",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "화면 가장자리에서 빼꼼 나오는 탭형 스티커 메모",
   "main": "src/main/main.js",
   "scripts": {
@@ -16,7 +16,9 @@
     "appId": "com.sidememo.app",
     "productName": "사이드 메모",
     "copyright": "사이드 메모",
-    "directories": { "output": "dist" },
+    "directories": {
+      "output": "dist"
+    },
     "files": [
       "src/**/*",
       "assets/icon-*.png",
@@ -25,7 +27,12 @@
     ],
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "assets/icon.ico"
     },
@@ -37,7 +44,9 @@
       "createStartMenuShortcut": true,
       "shortcutName": "사이드 메모",
       "uninstallDisplayName": "사이드 메모",
-      "installerLanguages": ["ko-KR"],
+      "installerLanguages": [
+        "ko-KR"
+      ],
       "language": "1042",
       "artifactName": "SideMemo-Setup-${version}.${ext}"
     }
