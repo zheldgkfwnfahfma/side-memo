@@ -1,0 +1,16 @@
+# 의존성 (npm install 로 받으면 된다 — 355MB)
+node_modules/
+
+# 빌드 결과물 (설치본은 GitHub Releases 로 올린다 — 75MB)
+dist/
+
+# 아이콘은 tools/make-icon.js 가 빌드할 때 다시 만든다.
+# 다만 소스만 받아서 바로 실행할 수 있도록 커밋해 둔다.
+
+# 잡동사니
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src sidememo-img: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self';" />
+<title>사이드 메모</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div id="app" class="edge-right collapsed">
+
+  <!-- ─────────────── 메모 패널 ─────────────── -->
+  <section id="panel">
+    <div id="grip" title="드래그해서 폭 조절"></div>
+
+    <header id="panel-head">
+      <input id="tab-name" class="tab-name" maxlength="20" spellcheck="false" />
+      <div class="head-actions">
+        <button id="btn-search" class="icon-btn" title="모든 메모에서 찾기 (Ctrl+F)">🔍</button>
+        <button id="btn-pin" class="icon-btn" title="고정 (닫히지 않게)">📌</button>
+        <button id="btn-settings" class="icon-btn" title="설정">⚙</button>
+        <button id="btn-close" class="icon-btn" title="닫기">✕</button>
+      </div>
+    </header>
+
+    <!-- 패널 안에서 뜨는 확인 창. 네이티브 confirm() 은 창 포커스를 뺏어 메모지가 접혀버린다. -->
+    <div id="ask" hidden>
+      <div class="ask-card">
+        <p id="ask-msg"></p>
+        <div class="ask-btns">
+          <button id="ask-no">취소</button>
+          <button id="ask-yes">확인</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="pin-badge" hidden>📌 고정됨</div>
+    <div id="toast" hidden></div>
+
+    <div id="editor" contenteditable="true" spellcheck="false"></div>
+    <!-- 선택한 이미지의 오른쪽 아래에 붙는 크기 조절 손잡이 (에디터 내용에는 들어가지 않는다) -->
+    <div id="img-handle" hidden></div>
+
+    <!-- ─────────── 서식 툴바 ─────────── -->
+    <div id="toolbar">
+      <button id="chip-tab" class="chip" title="탭 색상 바꾸기"><span id="chip-label">빼꼼</span></button>
+
+      <div class="tool-group">
+        <button class="tb" data-pop="fore" title="글자 색">
+          <span class="glyph-a">A</span><span id="fore-bar" class="color-bar"></span>
+        </button>
+        <button class="tb" data-cmd="bold" title="굵게"><b>B</b></button>
+        <button class="tb" data-cmd="italic" title="기울임"><i>I</i></button>
+        <button class="tb" data-cmd="underline" title="밑줄"><u>U</u></button>
+        <button class="tb" data-cmd="strikeThrough" title="취소선"><s>S</s></button>
+        <button class="tb" data-pop="align" title="정렬">≡<span class="caret">▾</span></button>
+        <button class="tb" data-pop="list" title="목록">☰<span class="caret">▾</span></button>
+        <button class="tb" id="btn-image" title="이미지 넣기">🖼</button>
+        <button class="tb" id="btn-file" title="파일 첨부">📎</button>
+      </div>
+    </div>
+
+    <!-- ─────────── 팝오버들 ─────────── -->
+    <div id="pop-fore" class="popover swatches" hidden></div>
+
+    <div id="pop-align" class="popover menu" hidden>
+      <button data-cmd="justifyLeft">왼쪽 정렬</button>
+      <button data-cmd="justifyCenter">가운데 정렬</button>
+      <button data-cmd="justifyRight">오른쪽 정렬</button>
+    </div>
+
+    <div id="pop-list" class="popover menu" hidden>
+      <button data-cmd="insertUnorderedList">• 글머리 기호</button>
+      <button data-cmd="insertOrderedList">1. 번호 매기기</button>
+      <button data-cmd="outdent">← 내어쓰기</button>
+      <button data-cmd="indent">→ 들여쓰기</button>
+    </div>
+
+    <div id="pop-tabcolor" class="popover swatches" hidden></div>
+
+    <!-- ─────────── 이미지 조절 ─────────── -->
+    <div id="img-tools" class="popover" hidden>
+      <div class="row">
+        <span class="lbl">크기</span>
+        <input id="img-size" type="range" min="5" max="100" step="1" />
+        <span id="img-size-val" class="val">60%</span>
+      </div>
+      <div class="row ratios">
+        <button data-ratio="25">25%</button>
+        <button data-ratio="50">50%</button>
+        <button data-ratio="75">75%</button>
+        <button data-ratio="100">100%</button>
+      </div>
+      <div class="row">
+        <button id="img-delete" class="danger">이미지 삭제</button>
+      </div>
+    </div>
+
+    <!-- ─────────── 통합 검색 ─────────── -->
+    <div id="search" class="sheet" hidden>
+      <div class="sheet-head">
+        <input id="search-input" type="search" placeholder="모든 메모에서 찾기…" spellcheck="false" />
+        <button id="search-close" class="icon-btn">✕</button>
+      </div>
+      <div class="sheet-body">
+        <div id="search-results"></div>
+        <p class="hint" id="search-hint">모든 가장자리의 모든 메모를 찾습니다. <code>Esc</code> 로 닫기.</p>
+      </div>
+    </div>
+
+    <!-- ─────────── 설정 시트 ─────────── -->
+    <div id="settings" class="sheet" hidden>
+      <div class="sheet-head">
+        <strong>설정</strong>
+        <button id="settings-close" class="icon-btn">✕</button>
+      </div>
+
+      <div class="sheet-body">
+        <details id="help">
+          <summary>이 프로그램으로 할 수 있는 것</summary>
+
+          <h4>열고 닫기</h4>
+          <ul>
+            <li>가장자리의 <b>탭 제목에 마우스를 올리면</b> 메모지가 나옵니다.</li>
+            <li>마우스가 벗어나면 접힙니다. <b>아무 데나 더블클릭</b>하면 고정돼서 안 접힙니다.</li>
+            <li>고정되면 보라색 테두리와 <b>📌 고정됨</b> 배지가 보입니다.</li>
+            <li>접혀 있는 동안에는 탭을 뺀 나머지 영역의 클릭이 <b>아래 창으로 통과</b>합니다.</li>
+          </ul>
+
+          <h4>메모 관리</h4>
+          <ul>
+            <li>탭 아래 <b>＋</b> 로 새 메모, 제목을 눌러 이름 변경, 왼쪽 아래 알약을 눌러 탭 색 변경.</li>
+            <li>탭 <b>우클릭</b> → 휴지통으로. 설정의 휴지통에서 <b>30일 안에 되돌리기</b> 가능합니다.</li>
+            <li>탭을 <b>위아래로 끌면</b> 그 탭만 원하는 높이로 옮겨집니다. 가까이 가면 딱 붙습니다.</li>
+          </ul>
+
+          <h4>글쓰기</h4>
+          <ul>
+            <li>굵게 · 기울임 · 밑줄 · 취소선 · 정렬 · 목록 · 글자색.</li>
+            <li><b>F5</b> 로 지금 날짜와 시간을 넣습니다. <code>Shift+F5</code> 날짜만, <code>Ctrl+F5</code> 시간만.</li>
+            <li><code>http://</code> 주소를 치고 공백을 누르면 링크가 됩니다. <b>Ctrl+클릭</b>으로 열기.</li>
+            <li>이미지: 🖼 버튼 · 끌어다 놓기 · 붙여넣기. <b>장수 제한 없음.</b> 클릭하면 크기 조절 손잡이가 나옵니다.</li>
+            <li>파일 첨부: 📎 버튼이나 끌어다 놓기. 칩을 <b>클릭하면 열리고</b>, 우클릭하면 저장 위치가 열립니다.</li>
+          </ul>
+
+          <h4>찾기</h4>
+          <ul>
+            <li>헤더의 <b>🔍</b> 또는 <code>Ctrl+F</code> — 모든 가장자리의 모든 메모를 한 번에 찾습니다.</li>
+          </ul>
+
+          <h4>화면 배치</h4>
+          <ul>
+            <li>메모지 <b>안쪽 모서리를 끌면</b> 폭이 바뀝니다 (그 메모에만 적용).</li>
+            <li>글자 크기·폭은 <b>'이 메모만'</b> 을 켜서 메모별로 다르게 둘 수 있습니다.</li>
+            <li><b>가장자리 추가</b>로 화면 좌·우에 각각, 모니터 2대면 <b>최대 4개</b>까지.</li>
+            <li><b>탭 보이기</b> 를 바꾸면 평소엔 숨기고 가장자리에 마우스를 댈 때만 나오게 할 수 있습니다.</li>
+            <li>발표 중엔 <b>잠시 숨기기</b>(<span data-help-sc="hideAll">Ctrl+Alt+H</span>)로 통째로 감춥니다.</li>
+          </ul>
+
+          <h4>안전장치</h4>
+          <ul>
+            <li>입력이 멈추면 <b>0.4초 뒤 자동 저장</b>. 따로 저장할 필요가 없습니다.</li>
+            <li>지운 메모는 <b>휴지통</b>에 30일, 데이터는 <b>주기적으로 자동 백업</b>됩니다.</li>
+            <li>저장 위치를 OneDrive 같은 폴더로 옮기면 <b>다른 PC와 같은 메모</b>를 볼 수 있습니다.</li>
+          </ul>
+
+          <h4>주고받기</h4>
+          <ul>
+            <li><b>.smemo</b> 로 내보내면 이미지·첨부까지 파일 하나에 담깁니다. 받는 사람은 가져오기만 하면 됩니다.</li>
+            <li>앱이 없는 사람에게는 <b>.html</b> 로 내보내면 브라우저에서 바로 보입니다.</li>
+          </ul>
+
+          <h4>단축키 (윈도우 어디서나)</h4>
+          <table class="help-keys">
+            <tr><td>메모 열기 / 닫기</td><td><span data-help-sc="toggle"></span></td></tr>
+            <tr><td>새 메모 추가</td><td><span data-help-sc="newNote"></span></td></tr>
+            <tr><td>다음 메모로</td><td><span data-help-sc="nextTab"></span></td></tr>
+            <tr><td>잠시 숨기기</td><td><span data-help-sc="hideAll"></span></td></tr>
+          </table>
+          <p class="hint">메모지 안에서만: <code>Esc</code> 닫기 · <code>Ctrl+S</code> 즉시 저장 · <code>F5</code> 날짜/시간</p>
+        </details>
+
+        <div class="field">
+          <label>배경색</label>
+          <div id="bg-swatches" class="swatch-row"></div>
+          <input id="bg-custom" type="color" title="직접 고르기" />
+        </div>
+
+        <div class="field">
+          <label>글자색</label>
+          <div id="text-swatches" class="swatch-row"></div>
+          <input id="text-custom" type="color" title="직접 고르기" />
+        </div>
+
+        <div class="field">
+          <label>폰트</label>
+          <select id="font-family"></select>
+        </div>
+
+        <div class="field">
+          <label>
+            <span id="font-size-label">기본 글자 크기</span> <span id="font-size-val" class="val">15px</span>
+            <label class="only-this"><input id="font-size-own" type="checkbox" /> 이 메모만</label>
+          </label>
+          <input id="font-size" type="range" min="11" max="28" step="1" />
+        </div>
+
+        <div class="field">
+          <label>투명도 <span id="opacity-val" class="val">100%</span></label>
+          <input id="opacity" type="range" min="30" max="100" step="1" />
+        </div>
+
+        <div class="field">
+          <label>
+            <span id="width-label">기본 패널 폭</span>
+            <label class="only-this"><input id="width-own" type="checkbox" /> 이 메모만</label>
+          </label>
+          <div class="num-row">
+            <button id="width-minus" class="step" title="10px 줄이기">−</button>
+            <input id="panel-width-num" type="number" min="260" max="900" step="1" />
+            <span class="unit">px</span>
+            <button id="width-plus" class="step" title="10px 늘리기">＋</button>
+          </div>
+          <input id="panel-width" type="range" min="260" max="900" step="1" />
+          <p class="hint">슬라이더는 <b>놓는 순간</b> 적용됩니다. 숫자 칸과 ± 로 1px 단위까지 맞출 수 있어요.</p>
+        </div>
+
+        <div class="field">
+          <label>이 메모지가 붙는 모니터</label>
+          <select id="display-select"></select>
+        </div>
+
+        <div class="field">
+          <label>이 메모지가 붙는 위치</label>
+          <div class="seg">
+            <button data-edge="left">왼쪽</button>
+            <button data-edge="right">오른쪽</button>
+          </div>
+          <p class="hint" id="dock-msg" hidden></p>
+        </div>
+
+        <div class="field">
+          <label>탭 세로 위치 <span id="tabs-offset-val" class="val">맨 위</span></label>
+          <input id="tabs-offset" type="range" min="0" max="100" step="1" />
+          <button id="tabs-reset" class="wide">탭 위치 초기화</button>
+          <p class="hint">탭은 <b>하나씩 끌어서</b> 원하는 높이에 둘 수 있습니다.
+            가까이 가져가면 옆 탭에 딱 붙습니다. 이 슬라이더는 <b>따로 옮기지 않은 탭</b>들의 시작 위치입니다.</p>
+        </div>
+
+        <div class="field">
+          <label>가장자리 <span class="val" id="dock-count"></span></label>
+          <div id="dock-list"></div>
+          <button id="dock-add" class="wide">＋ 가장자리 추가</button>
+          <p class="hint">가장자리마다 <b>완전히 별개의 메모 묶음</b>을 가집니다.
+            모니터 하나당 좌·우 2개씩 쓸 수 있어요.</p>
+        </div>
+
+        <div class="field">
+          <label>언제 접을까요</label>
+          <div class="seg col">
+            <button data-close="mouse">마우스가 벗어나면 바로</button>
+            <button data-close="focus">다른 창을 클릭하면</button>
+            <button data-close="manual">직접 닫을 때만</button>
+          </div>
+          <p class="hint">📌 을 눌러 고정해두면 어떤 모드에서도 접히지 않습니다.</p>
+        </div>
+
+        <div class="field">
+          <label>탭 보이기</label>
+          <div class="seg col">
+            <button data-vis="always">항상 보이기</button>
+            <button data-vis="hover">가장자리에 마우스를 댈 때만</button>
+            <button data-vis="hidden">숨기기 (단축키·트레이로만)</button>
+          </div>
+          <button id="hide-now" class="wide">지금 잠시 숨기기</button>
+          <p class="hint">잠시 숨기면 화면에서 완전히 사라집니다.
+            트레이 아이콘을 누르거나 <b>열기 단축키</b>로 다시 부를 수 있습니다.</p>
+        </div>
+
+        <div class="field">
+          <label>닫히는 속도</label>
+          <div class="seg">
+            <button data-speed="instant">즉시</button>
+            <button data-speed="fast">빠르게</button>
+            <button data-speed="normal">느긋하게</button>
+          </div>
+          <p class="hint">마우스가 벗어난 뒤 접히기까지의 여유입니다. 즉시는 스치기만 해도 바로 닫힙니다.</p>
+        </div>
+
+        <label class="check"><input id="free-layout" type="checkbox" /> 탭 자유 배치 (끄면 항상 위에서부터 정렬)</label>
+        <label class="check"><input id="peek-hover" type="checkbox" /> 탭에 마우스만 올려도 열기</label>
+        <label class="check"><input id="startup" type="checkbox" /> 윈도우 시작 시 자동 실행</label>
+
+        <div class="field" id="shortcut-field">
+          <label>
+            단축키 <span class="val">윈도우 어디서나 동작</span>
+            <label class="only-this"><input id="shortcuts-on" type="checkbox" /> 사용</label>
+          </label>
+          <div class="keyrow">
+            <span>메모 열기 / 닫기</span>
+            <button class="keybtn" data-sc="toggle"></button>
+            <button class="keyclear" data-sc="toggle" title="이 단축키만 끄기">✕</button>
+          </div>
+          <div class="keyrow">
+            <span>새 메모 추가</span>
+            <button class="keybtn" data-sc="newNote"></button>
+            <button class="keyclear" data-sc="newNote" title="이 단축키만 끄기">✕</button>
+          </div>
+          <div class="keyrow">
+            <span>다음 메모로</span>
+            <button class="keybtn" data-sc="nextTab"></button>
+            <button class="keyclear" data-sc="nextTab" title="이 단축키만 끄기">✕</button>
+          </div>
+          <div class="keyrow">
+            <span>잠시 숨기기 / 다시 보이기</span>
+            <button class="keybtn" data-sc="hideAll"></button>
+            <button class="keyclear" data-sc="hideAll" title="이 단축키만 끄기">✕</button>
+          </div>
+          <p class="hint" id="shortcut-hint">버튼을 누른 뒤 원하는 키 조합을 누르세요. <code>Esc</code> 로 취소.</p>
+        </div>
+
+        <div class="field">
+          <label>메모 주고받기</label>
+          <div class="btn-row">
+            <button id="export-one">이 메모 내보내기…</button>
+            <button id="export-all">전체 내보내기…</button>
+          </div>
+          <button id="import-memo" class="wide">메모 가져오기…</button>
+          <p class="hint"><b>.smemo</b> 로 내보내면 이미지·첨부파일까지 파일 하나에 담겨서,
+            받은 사람이 <b>가져오기</b> 로 그대로 열 수 있습니다.
+            앱이 없는 사람에게는 <b>.html</b> 로 내보내면 브라우저에서 바로 보입니다.</p>
+        </div>
+
+        <div class="field">
+          <label>휴지통 <span class="val" id="trash-count"></span></label>
+          <div id="trash-list"></div>
+          <button id="trash-empty" class="wide">휴지통 비우기</button>
+          <p class="hint">지운 메모는 <b id="trash-days">30</b>일 동안 여기 남아 있습니다.
+            탭을 우클릭하면 휴지통으로 갑니다.</p>
+        </div>
+
+        <div class="field">
+          <label>저장 위치</label>
+          <div class="path-box"><code id="data-dir"></code></div>
+          <p class="hint" id="data-default"></p>
+          <div class="btn-row">
+            <button id="data-open">폴더 열기</button>
+            <button id="data-change">위치 변경…</button>
+            <button id="data-reset">기본값으로</button>
+          </div>
+          <p class="hint">OneDrive 같은 동기화 폴더로 옮기면 다른 PC와 메모를 공유할 수 있습니다.</p>
+        </div>
+
+        <div class="field">
+          <label>자동 백업 <span class="val" id="backup-count"></span></label>
+          <select id="backup-hours">
+            <option value="0">사용 안 함</option>
+            <option value="1">1시간마다</option>
+            <option value="6">6시간마다</option>
+            <option value="12">12시간마다</option>
+            <option value="24">하루에 한 번</option>
+          </select>
+          <div class="btn-row">
+            <button id="backup-now">지금 백업</button>
+            <button id="backup-open">백업 폴더 열기</button>
+          </div>
+          <p class="hint" id="backup-last">실행할 때 한 번, 이후 주기마다 저장됩니다. 최근 12개를 보관합니다.</p>
+        </div>
+
+        <div class="sheet-foot">
+          <span class="hint">저장은 자동</span>
+          <button id="btn-quit" class="danger">종료</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────── 탭 스트립 ─────────────── -->
+  <nav id="tabstrip">
+    <div id="drop-slot" hidden></div>
+    <div id="tabs"></div>
+    <button id="add-tab" title="탭 추가">＋</button>
+  </nav>
+
+</div>
+<script src="renderer.js"></script>
+</body>
+</html>

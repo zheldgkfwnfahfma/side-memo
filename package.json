@@ -1,0 +1,50 @@
+{
+  "name": "side-memo",
+  "productName": "사이드 메모",
+  "version": "0.4.3",
+  "description": "화면 가장자리에서 빼꼼 나오는 탭형 스티커 메모",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node tools/share-test.js && node tools/store-test.js && node tools/smoke-test.js",
+    "build": "node tools/build.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "build": {
+    "appId": "com.sidememo.app",
+    "productName": "사이드 메모",
+    "copyright": "사이드 메모",
+    "directories": { "output": "dist" },
+    "files": [
+      "src/**/*",
+      "assets/icon-*.png",
+      "package.json",
+      "!**/*.map"
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "사이드 메모",
+      "uninstallDisplayName": "사이드 메모",
+      "installerLanguages": ["ko-KR"],
+      "language": "1042",
+      "artifactName": "SideMemo-Setup-${version}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^26.15.3",
+    "ws": "^8.21.3"
+  }
+}
