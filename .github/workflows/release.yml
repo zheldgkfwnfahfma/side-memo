@@ -1,0 +1,84 @@
+# 태그를 밀면 GitHub 가 알아서 설치본을 빌드해 릴리스에 붙인다.
+#
+#   git tag v0.4.4
+#   git push origin v0.4.4
+#
+# 이러면 끝. 직접 빌드하거나 파일을 끌어다 올릴 필요가 없다.
+name: 설치본 빌드 · 릴리스
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'V*'
+  # 태그를 이미 만들어 둔 경우 수동으로도 돌릴 수 있다
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '릴리스를 붙일 태그 (예: v0.4.4)'
+        required: true
+
+# 릴리스에 파일을 올리려면 쓰기 권한이 필요하다
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # NSIS 설치본은 윈도우에서만 만들 수 있다
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 의존성 설치
+        run: npm ci
+
+      # UI 테스트(smoke-test)는 실제 창을 띄우므로 CI 에서는 불안정하다.
+      # 순수 로직 테스트만 여기서 돌리고, UI 는 손에서 npm test 로 확인한다.
+      - name: 단위 테스트
+        run: |
+          node tools/share-test.js
+          node tools/store-test.js
+
+      - name: 태그와 package.json 버전이 같은지 확인
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          want="${tag#[vV]}"
+          have="$(node -p "require('./package.json').version")"
+          echo "태그 $tag → $want / package.json → $have"
+          if [ "$want" != "$have" ]; then
+            echo "::error::태그($want)와 package.json 버전($have)이 다릅니다. package.json 을 먼저 올리세요."
+            exit 1
+          fi
+          echo "TAG=$tag"       >> "$GITHUB_ENV"
+          echo "VERSION=$have"  >> "$GITHUB_ENV"
+
+      - name: 설치본 빌드
+        run: npm run build
+
+      - name: 릴리스에 올리기
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # dist 에는 __uninstaller.exe 같은 부산물도 있으므로 이름을 정확히 집는다
+          file="dist/SideMemo-Setup-$VERSION.exe"
+          if [ ! -f "$file" ]; then
+            echo "::error::$file 이 만들어지지 않았습니다."
+            ls -la dist || true
+            exit 1
+          fi
+          echo "올릴 파일: $file"
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # 이미 릴리스가 있으면 파일만 갈아끼운다
+            gh release upload "$TAG" "$file" --clobber
+          else
+            gh release create "$TAG" "$file" --title "$TAG" --generate-notes
+          fi
