@@ -37,6 +37,7 @@ class Store {
         bgColor: '#FBF3B0',
         textColor: '#4C1D95',
         peekOnHover: true,        // 탭 제목에 마우스를 올리면 열기
+        wheelFontSize: true,      // Ctrl+휠로 글자 크기 조절
         tabVisibility: 'always',  // 'always' 항상 보임 | 'hover' 가장자리에 마우스를 대면 | 'hidden' 완전히 숨김
         freeTabLayout: true,      // 탭을 원하는 높이에 하나씩 둘 수 있게
         closeMode: 'mouse',       // 'mouse' 마우스가 벗어나면 | 'focus' 다른 창 클릭 시 | 'manual' 직접 닫을 때만

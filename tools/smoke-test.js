@@ -195,57 +195,68 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       (async () => JSON.stringify(await window.sideMemo.openFile('..%2F..%2Fdata.json')))()`);
     check('폴더 밖은 못 연다', JSON.parse(escape).ok === false, escape);
 
-    // ── Ctrl+드래그 / Ctrl+휠 로 글자 크기 ──────────────
-    const fontDrag = await evalInPage(ws, `
+    // ── Ctrl+휠 로 글자 크기 ────────────────────────────
+    const wheelUp = await evalInPage(ws, `
       (() => {
+        saveSettings({ wheelFontSize: true });
         activeTab().fontSize = null;
         applySettings();
         const before = effFontSize();
-        const opt = (y, extra) => Object.assign(
-          { bubbles: true, cancelable: true, clientX: 60, clientY: y, pointerId: 7, button: 0 }, extra);
-        editor.dispatchEvent(new PointerEvent('pointerdown', opt(300, { ctrlKey: true })));
-        editor.dispatchEvent(new PointerEvent('pointermove', opt(260, { ctrlKey: true })));
-        editor.dispatchEvent(new PointerEvent('pointerup',   opt(260, { ctrlKey: true })));
-        return JSON.stringify({ before, after: effFontSize(), own: activeTab().fontSize });
+        const ev = new WheelEvent('wheel',
+          { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -120 });
+        editor.dispatchEvent(ev);
+        return JSON.stringify({ before, after: effFontSize(),
+                                own: activeTab().fontSize, blocked: ev.defaultPrevented });
       })()`);
-    const fd = JSON.parse(fontDrag);
-    check('위로 끌면 글자가 커진다', fd.after === fd.before + 5, fontDrag);
-    check('끈 값이 이 메모에만 붙는다', fd.own === fd.after, String(fd.own));
+    const wu = JSON.parse(wheelUp);
+    check('Ctrl+휠 위로 굴리면 커진다', wu.after === wu.before + 1, wheelUp);
+    check('바꾼 크기가 이 메모에만 붙는다', wu.own === wu.after, String(wu.own));
+    check('스크롤 대신 크기 조절로 먹는다', wu.blocked === true);
 
-    const fontDown = await evalInPage(ws, `
+    const wheelDown = await evalInPage(ws, `
       (() => {
         const before = effFontSize();
-        const opt = (y) => ({ bubbles: true, cancelable: true, clientX: 60, clientY: y,
-                              pointerId: 8, button: 0, ctrlKey: true });
-        editor.dispatchEvent(new PointerEvent('pointerdown', opt(300)));
-        editor.dispatchEvent(new PointerEvent('pointermove', opt(340)));
-        editor.dispatchEvent(new PointerEvent('pointerup',   opt(340)));
+        editor.dispatchEvent(new WheelEvent('wheel',
+          { bubbles: true, cancelable: true, ctrlKey: true, deltaY: 120 }));
         return JSON.stringify({ before, after: effFontSize() });
       })()`);
-    const fdn = JSON.parse(fontDown);
-    check('아래로 끌면 작아진다', fdn.after === fdn.before - 5, fontDown);
+    const wd = JSON.parse(wheelDown);
+    check('아래로 굴리면 작아진다', wd.after === wd.before - 1, wheelDown);
 
     const noCtrl = await evalInPage(ws, `
       (() => {
         const before = effFontSize();
-        const opt = (y) => ({ bubbles: true, cancelable: true, clientX: 60, clientY: y,
-                              pointerId: 9, button: 0 });
-        editor.dispatchEvent(new PointerEvent('pointerdown', opt(300)));
-        editor.dispatchEvent(new PointerEvent('pointermove', opt(200)));
-        editor.dispatchEvent(new PointerEvent('pointerup',   opt(200)));
-        return effFontSize() === before;
+        const ev = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120 });
+        editor.dispatchEvent(ev);
+        return JSON.stringify({ same: effFontSize() === before, blocked: ev.defaultPrevented });
       })()`);
-    check('Ctrl 없이 끌면 크기는 그대로 (글자 선택용)', noCtrl === true);
+    check('Ctrl 없이 굴리면 평소대로 스크롤',
+      JSON.parse(noCtrl).same && JSON.parse(noCtrl).blocked === false, noCtrl);
 
-    const wheel = await evalInPage(ws, `
+    // 옵션을 끄면 크기가 안 바뀌고 스크롤도 막지 않아야 한다
+    const wheelOff = await evalInPage(ws, `
       (() => {
+        saveSettings({ wheelFontSize: false });
         const before = effFontSize();
-        editor.dispatchEvent(new WheelEvent('wheel',
-          { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -120 }));
-        return JSON.stringify({ before, after: effFontSize() });
+        const ev = new WheelEvent('wheel',
+          { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -120 });
+        editor.dispatchEvent(ev);
+        return JSON.stringify({ same: effFontSize() === before, blocked: ev.defaultPrevented });
       })()`);
-    const wh = JSON.parse(wheel);
-    check('Ctrl+휠 위로 굴리면 커진다', wh.after === wh.before + 1, wheel);
+    check('옵션을 끄면 크기가 안 바뀐다', JSON.parse(wheelOff).same, wheelOff);
+    check('옵션을 끄면 스크롤을 막지 않는다', JSON.parse(wheelOff).blocked === false, wheelOff);
+
+    const uiOff = await evalInPage(ws, `
+      (() => { syncSettingsUI(); return document.querySelector('#wheel-font').checked; })()`);
+    check('설정 화면 체크박스가 꺼짐을 보여준다', uiOff === false);
+
+    const uiOn = await evalInPage(ws, `
+      (() => {
+        document.querySelector('#wheel-font').checked = true;
+        document.querySelector('#wheel-font').dispatchEvent(new Event('change', { bubbles: true }));
+        return JSON.stringify({ setting: state.settings.wheelFontSize });
+      })()`);
+    check('체크박스로 다시 켤 수 있다', JSON.parse(uiOn).setting === true, uiOn);
 
     const clamp = await evalInPage(ws, `
       (() => {
