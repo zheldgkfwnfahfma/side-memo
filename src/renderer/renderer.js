@@ -803,10 +803,16 @@ function prettySize(bytes) {
   return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)}${units[i]}`;
 }
 
+/*
+ * 첨부파일 칩을 넣는다.
+ * data-file 에는 저장된 이름을 퍼센트 인코딩해서 넣는다. 원래 이름을 그대로 쓰게 되면서
+ * 이름에 & 나 따옴표가 섞일 수 있는데, 인코딩해 두면 HTML 안에서 안전하고
+ * 청소(pruneImages)나 내보내기가 이름을 되읽을 때도 어긋나지 않는다.
+ */
 function insertFileChip({ token, name, size }) {
   editor.focus();
   document.execCommand('insertHTML', false,
-    `<span class="file-chip" contenteditable="false" data-file="${escapeHtml(token)}" `
+    `<span class="file-chip" contenteditable="false" data-file="${encodeURIComponent(token)}" `
     + `title="클릭해서 열기 · 우클릭하면 폴더에서 보기">`
     + `📎<span class="fname">${escapeHtml(name)}</span>`
     + `<span class="fsize">${prettySize(size)}</span></span>&nbsp;`);

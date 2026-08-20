@@ -7,7 +7,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 const { Store } = require('./store');
-const { createShare, htmlToText, safeFileName } = require('./share');
+const { createShare, htmlToText, safeFileName, uniqueStoredName } = require('./share');
 
 const TAB_W = 34;              // 화면 가장자리에 항상 남아 있는 탭 스트립 폭
 // 커서가 벗어난 뒤 접히기까지의 유예(ms). 설정에서 고른다.
@@ -596,21 +596,26 @@ function paneOf(event) {
   return null;
 }
 
-/**
+/*
  * 첨부파일을 userData/files 아래로 복사한다.
- * 저장 이름은 우리가 만든 UUID + 원래 확장자라서, 메모 HTML 에 들어가는 값으로
- * 앱 폴더 밖을 가리키게 만들 수 없다. (표시용 이름은 메모 안의 글자로만 남는다)
+ * 폴더를 탐색기로 열었을 때 알아볼 수 있도록 '원래 이름 그대로' 저장하고,
+ * 같은 이름이 이미 있으면 '이름 (2).확장자' 로 비켜 간다.
+ * 이름을 다듬는 규칙은 share.js 의 uniqueStoredName 에 있다.
  */
 function storeFile(buffer, originalName) {
-  const ext = path.extname(originalName).slice(0, 20);
-  const token = `${crypto.randomUUID()}${ext}`;
+  const token = uniqueStoredName(store.fileDir, originalName);
   fs.writeFileSync(path.join(store.fileDir, token), buffer);
-  return { token, name: path.basename(originalName), size: buffer.length };
+  return { token, name: path.basename(String(originalName || '')), size: buffer.length };
 }
 
-/** 메모에 적힌 토큰을 실제 경로로 바꾼다. 폴더를 벗어나는 값은 거절한다. */
+/**
+ * 메모에 적힌 토큰을 실제 경로로 바꾼다. 폴더를 벗어나는 값은 거절한다.
+ * 메모 HTML 에는 퍼센트 인코딩된 이름이 들어 있으므로 먼저 되돌린다.
+ */
 function resolveStoredFile(token) {
-  const name = path.basename(String(token || ''));
+  let raw = String(token || '');
+  try { raw = decodeURIComponent(raw); } catch { /* 인코딩이 깨졌으면 원문 그대로 본다 */ }
+  const name = path.basename(raw);
   const file = path.join(store.fileDir, name);
   if (!file.startsWith(store.fileDir) || !fs.existsSync(file)) return null;
   return file;

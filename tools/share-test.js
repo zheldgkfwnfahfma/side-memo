@@ -7,7 +7,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { createShare, htmlToText, safeFileName } = require('../src/main/share');
+const { createShare, htmlToText, safeFileName, safeStoredName, uniqueStoredName } = require('../src/main/share');
 
 const results = [];
 const check = (name, ok, detail = '') => {
@@ -58,7 +58,21 @@ check('글 내용이 그대로다', /10\.0\.0\.5/.test(imported[0].html));
 const newImg = imported[0].html.match(/sidememo-img:\/\/img\/([^"]+)/);
 const newFile = imported[0].html.match(/data-file="([^"]+)"/);
 check('이미지 참조가 새 이름으로 바뀐다', !!newImg && newImg[1] !== 'pic.png', newImg && newImg[1]);
-check('첨부 참조가 새 이름으로 바뀐다', !!newFile && newFile[1] !== 'abc.docx', newFile && newFile[1]);
+// 첨부파일은 원래 이름을 지킨다. 받는 쪽에서 알아볼 수 있어야 하기 때문.
+check('첨부 참조가 원래 이름을 지킨다',
+  !!newFile && decodeURIComponent(newFile[1]) === 'abc.docx', newFile && newFile[1]);
+check('그 이름의 파일이 실제로 있다',
+  fs.existsSync(path.join(receiver, 'files', 'abc.docx')));
+
+// 받는 쪽에 같은 이름이 이미 있으면 덮어쓰지 않고 비켜 간다
+{
+  const again = inn.fromBundle(JSON.parse(JSON.stringify(bundle)));
+  const ref = again[0].html.match(/data-file="([^"]+)"/);
+  check('같은 첨부를 또 받으면 이름을 비켜 간다',
+    decodeURIComponent(ref[1]) === 'abc (2).docx', ref && decodeURIComponent(ref[1]));
+  check('먼저 받은 첨부는 그대로 남는다',
+    fs.readFileSync(path.join(receiver, 'files', 'abc.docx'), 'utf8') === 'DOCXDATA');
+}
 check('이미지 파일이 받는 쪽에 저장된다',
   fs.readFileSync(path.join(receiver, 'images', newImg[1])).toString() === 'PNGDATA');
 check('첨부파일이 받는 쪽에 저장된다',
@@ -95,6 +109,56 @@ check('텍스트 가져오기는 HTML 을 이스케이프한다',
 check('파일 이름에서 금지문자 제거', safeFileName('업무/보고:2026') === '업무_보고_2026', safeFileName('업무/보고:2026'));
 check('빈 이름은 기본값', safeFileName('') === '메모');
 check('htmlToText 가 태그를 걷어낸다', htmlToText('<div>가<br>나</div>') === '가 나', htmlToText('<div>가<br>나</div>'));
+
+// ── 첨부파일 저장 이름 ────────────────────────────────────
+const nm = (x) => { const r = safeStoredName(x); return r.stem + r.ext; };
+
+check('원래 이름을 그대로 쓴다', nm('분기보고서.docx') === '분기보고서.docx', nm('분기보고서.docx'));
+check('경로가 섞여 와도 이름만 남긴다',
+  nm('C:\\Windows\\system32\\cmd.exe') === 'cmd.exe', nm('C:\\Windows\\cmd.exe'));
+check('상위 폴더로 못 올라간다', nm('..') === '첨부파일', nm('..'));
+check('슬래시 경로도 이름만 남긴다', nm('../../etc/passwd') === 'passwd', nm('../../etc/passwd'));
+check('금지문자는 밑줄로 바뀐다', nm('보고서:최종?.txt') === '보고서_최종_.txt', nm('보고서:최종?.txt'));
+check('윈도우 장치 이름은 피한다', nm('CON.txt') === '_CON.txt', nm('CON.txt'));
+check('끝의 점과 공백은 지운다', nm('메모.txt. ') === '메모.txt', nm('메모.txt. '));
+check('점으로 시작하는 이름은 살린다', nm('.gitignore') === '.gitignore', nm('.gitignore'));
+check('이름이 없으면 기본값', nm('') === '첨부파일', nm(''));
+check('아주 긴 이름은 자른다', Buffer.byteLength(nm('가'.repeat(200) + '.txt'), 'utf8') <= 128,
+  String(Buffer.byteLength(nm('가'.repeat(200) + '.txt'), 'utf8')));
+check('긴 이름도 확장자는 지킨다', nm('가'.repeat(200) + '.txt').endsWith('.txt'));
+
+// 같은 이름이 이미 있으면 비켜 간다
+{
+  const dir = path.join(sender, 'files');
+  fs.writeFileSync(path.join(dir, '같은이름.txt'), 'A');
+  const second = uniqueStoredName(dir, '같은이름.txt');
+  check('이름이 겹치면 (2) 를 붙인다', second === '같은이름 (2).txt', second);
+  fs.writeFileSync(path.join(dir, second), 'B');
+  check('그 다음은 (3)', uniqueStoredName(dir, '같은이름.txt') === '같은이름 (3).txt');
+  check('먼저 넣은 파일을 덮어쓰지 않는다',
+    fs.readFileSync(path.join(dir, '같은이름.txt'), 'utf8') === 'A');
+  fs.unlinkSync(path.join(dir, '같은이름.txt'));
+  fs.unlinkSync(path.join(dir, second));
+}
+
+// 이름에 & 가 있어도 내보내고 받는 과정에서 어긋나지 않아야 한다
+{
+  fs.writeFileSync(path.join(sender, 'files', 'A&B 보고서.docx'), Buffer.from('AMPDATA'));
+  const tricky = {
+    name: '까다로운 이름',
+    html: '<span class="file-chip" data-file="' + encodeURIComponent('A&B 보고서.docx') + '">A&amp;B 보고서.docx</span>',
+  };
+  const bundle = out.toBundle([tricky]);
+  check('& 가 든 이름도 묶음에 담긴다', !!bundle.files['A&B 보고서.docx'],
+    Object.keys(bundle.files).join(', '));
+
+  const got = inn.fromBundle(bundle);
+  check('받는 쪽에도 원래 이름으로 저장된다',
+    fs.existsSync(path.join(receiver, 'files', 'A&B 보고서.docx')),
+    fs.readdirSync(path.join(receiver, 'files')).join(', '));
+  check('메모의 참조도 그 파일을 가리킨다',
+    got[0].html.includes('data-file="' + encodeURIComponent('A&B 보고서.docx') + '"'), got[0].html);
+}
 
 for (const dir of [sender, receiver]) {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 임시 폴더 */ }

@@ -16,6 +16,60 @@ function safeFileName(name) {
   return String(name || '메모').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 60) || '메모';
 }
 
+/*
+ * 첨부파일을 저장할 이름을 만든다.
+ *
+ * 원래 이름 그대로 두는 게 목적이다. 탐색기에서 폴더를 열었을 때
+ * 'a3f9c1e2-....docx' 가 아니라 '분기보고서.docx' 로 보여야 하기 때문.
+ *
+ * 다만 이 이름이 그대로 메모 HTML 에 들어가므로 아래를 지킨다.
+ *   - 경로 구분자와 윈도우 금지문자를 걷어낸다 (앱 폴더 밖을 가리킬 수 없게)
+ *   - 윈도우가 장치 이름으로 쓰는 CON, PRN 같은 건 비켜 간다
+ *   - 이름이 너무 길면 자른다 (경로 길이 제한)
+ */
+const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+// 윈도우에서 파일 이름에 쓸 수 없는 글자들 (마지막은 역슬래시)
+const FORBIDDEN = '<>:"/|?*' + String.fromCharCode(92);
+
+function scrub(name) {
+  let out = '';
+  for (const ch of String(name)) {
+    out += (ch.codePointAt(0) < 32 || FORBIDDEN.includes(ch)) ? '_' : ch;
+  }
+  return out;
+}
+
+function safeStoredName(original) {
+  // 폴더 경로가 섞여 들어와도 마지막 이름만 쓴다
+  let name = scrub(path.basename(String(original || '')));
+  name = name.replace(/[. ]+$/, '');        // 윈도우는 끝의 점·공백을 무시한다
+  if (/^[.]+$/.test(name)) name = '';       // '.' '..' 는 이름이 아니다
+  if (!name) return { stem: '첨부파일', ext: '' };
+
+  let ext = path.extname(name);
+  if (ext.length > 20) ext = '';            // 확장자로 보기 어려우면 이름의 일부로 둔다
+  let stem = ext ? name.slice(0, -ext.length) : name;
+  if (!stem) { stem = '첨부파일'; }
+  if (RESERVED.test(stem)) stem = '_' + stem;
+
+  // 경로 길이 제한을 넘지 않게 자른다. 한글은 한 글자가 3바이트다.
+  const chars = Array.from(stem);
+  while (Buffer.byteLength(chars.join(''), 'utf8') > 120) chars.pop();
+  stem = chars.join('') || '첨부파일';
+
+  return { stem, ext };
+}
+
+/** dir 안에서 아직 안 쓰는 이름을 고른다. 같은 이름이 있으면 '이름 (2).확장자' 로 비켜 간다. */
+function uniqueStoredName(dir, original) {
+  const { stem, ext } = safeStoredName(original);
+  let candidate = stem + ext;
+  for (let i = 2; fs.existsSync(path.join(dir, candidate)); i++) {
+    candidate = stem + ' (' + i + ')' + ext;
+  }
+  return candidate;
+}
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -95,7 +149,8 @@ function createShare({ imageDir, fileDir, uuid }) {
 
     const fileMap = {};
     for (const [token, b64] of Object.entries(bundle.files || {})) {
-      const fresh = `${uuid()}${path.extname(token)}`;
+      // 받은 쪽에서도 원래 이름으로 보이게 한다
+      const fresh = uniqueStoredName(fileDir, token);
       fs.writeFileSync(path.join(fileDir, fresh), Buffer.from(b64, 'base64'));
       fileMap[token] = fresh;
     }
@@ -106,7 +161,10 @@ function createShare({ imageDir, fileDir, uuid }) {
         html = html.split(`sidememo-img://img/${oldName}`).join(`sidememo-img://img/${fresh}`);
       }
       for (const [oldToken, fresh] of Object.entries(fileMap)) {
-        html = html.split(`data-file="${oldToken}"`).join(`data-file="${fresh}"`);
+        // 메모 HTML 에는 퍼센트 인코딩된 이름이 들어 있다.
+        // (UUID 시절 파일은 인코딩해도 그대로라 예전 파일도 그냥 열린다)
+        html = html.split(`data-file="${encodeURIComponent(oldToken)}"`)
+                   .join(`data-file="${encodeURIComponent(fresh)}"`);
       }
       return { name: String(m.name || '가져온 메모').slice(0, 20), color: m.color || null, html };
     });
@@ -168,4 +226,7 @@ ${body}
   return { toBundle, fromBundle, toStandaloneHtml, toPlainText, fromPlainText };
 }
 
-module.exports = { createShare, htmlToText, referencedAssets, safeFileName, escapeHtml };
+module.exports = {
+  createShare, htmlToText, referencedAssets, safeFileName, escapeHtml,
+  safeStoredName, uniqueStoredName,
+};

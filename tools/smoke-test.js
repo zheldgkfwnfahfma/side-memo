@@ -148,6 +148,55 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('파일 첨부 → 칩 삽입', parsed.chips === 1 && parsed.name === '보고서.docx', saved);
     check('첨부파일이 디스크에 저장됨', fs.readdirSync(path.join(PROFILE, 'files')).length === 1);
 
+    // 탐색기에서 알아볼 수 있도록 원래 이름 그대로 저장돼야 한다
+    check('원래 이름 그대로 저장된다',
+      fs.existsSync(path.join(PROFILE, 'files', '보고서.docx')),
+      fs.readdirSync(path.join(PROFILE, 'files')).join(', '));
+
+    // 같은 이름을 또 넣으면 덮어쓰지 않고 비켜 가야 한다
+    const dupFile = await evalInPage(ws, `
+      (async () => {
+        const buf = new TextEncoder().encode('두 번째').buffer;
+        const r = await window.sideMemo.saveFile(buf, '보고서.docx');
+        return r.token;
+      })()`);
+    check('같은 이름은 (2) 로 비켜 간다', dupFile === '보고서 (2).docx', dupFile);
+    check('먼저 넣은 첨부를 덮어쓰지 않는다',
+      fs.readFileSync(path.join(PROFILE, 'files', '보고서.docx'), 'utf8') === 'hello attachment');
+
+    // 이름에 & 가 있어도 넣고, 다시 열 수 있어야 한다
+    const amp = await evalInPage(ws, `
+      (async () => {
+        const buf = new TextEncoder().encode('AMP').buffer;
+        const r = await window.sideMemo.saveFile(buf, 'A&B 자료.txt');
+        editor.innerHTML = '';
+        insertFileChip(r);
+        const chip = editor.querySelector('.file-chip');
+        return JSON.stringify({
+          token: r.token,
+          attr: chip.getAttribute('data-file'),
+          readBack: chip.dataset.file,
+        });
+      })()`);
+    const ampR = JSON.parse(amp);
+    check('& 가 든 이름도 그대로 저장된다',
+      ampR.token === 'A&B 자료.txt' && fs.existsSync(path.join(PROFILE, 'files', 'A&B 자료.txt')), amp);
+    check('메모 안에서는 인코딩된 형태로 들어간다',
+      ampR.attr === encodeURIComponent('A&B 자료.txt'), ampR.attr);
+
+    // 메인이 그 값을 되돌려 실제 파일을 찾아내는지 (열기가 성공해야 한다)
+    const openRes = await evalInPage(ws, `
+      (async () => JSON.stringify(await window.sideMemo.openFile(
+        document.querySelector('.file-chip').dataset.file)))()`);
+    check('인코딩된 값으로도 파일을 찾아낸다', JSON.parse(openRes).ok === true, openRes);
+
+    // 폴더 밖을 가리키는 값은 여전히 거절돼야 한다
+    const escape = await evalInPage(ws, `
+      (async () => JSON.stringify(await window.sideMemo.openFile('..%2F..%2Fdata.json')))()`);
+    check('폴더 밖은 못 연다', JSON.parse(escape).ok === false, escape);
+
+    await evalInPage(ws, "editor.innerHTML = ''; flushSave(); true");
+
     // ── 이미지 장수 제한 없음 ──────────────────────────
     const many = await evalInPage(ws, `
       editor.innerHTML = Array.from({length: 12}, () => '<img src="x" style="width:20%">').join('');
