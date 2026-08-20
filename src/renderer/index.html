@@ -79,6 +79,13 @@
 
     <div id="pop-tabcolor" class="popover swatches" hidden></div>
 
+    <!-- 첨부파일 칩을 우클릭하면 뜨는 메뉴 -->
+    <div id="pop-file" class="popover menu" hidden>
+      <button data-file-act="open">열기</button>
+      <button data-file-act="reveal">저장 위치 열기</button>
+      <button data-file-act="delete">삭제</button>
+    </div>
+
     <!-- ─────────── 이미지 조절 ─────────── -->
     <div id="img-tools" class="popover" hidden>
       <div class="row">
@@ -141,7 +148,7 @@
             <li><b>F5</b> 로 지금 날짜와 시간을 넣습니다. <code>Shift+F5</code> 날짜만, <code>Ctrl+F5</code> 시간만.</li>
             <li><code>http://</code> 주소를 치고 공백을 누르면 링크가 됩니다. <b>Ctrl+클릭</b>으로 열기.</li>
             <li>이미지: 🖼 버튼 · 끌어다 놓기 · 붙여넣기. <b>장수 제한 없음.</b> 클릭하면 크기 조절 손잡이가 나옵니다.</li>
-            <li>파일 첨부: 📎 버튼이나 끌어다 놓기. 칩을 <b>클릭하면 열리고</b>, 우클릭하면 저장 위치가 열립니다.</li>
+            <li>파일 첨부: 📎 버튼이나 끌어다 놓기. 칩을 <b>클릭하면 열리고</b>, <b>우클릭하면 메뉴</b>(열기 · 폴더 · 삭제)가 뜹니다.</li>
           </ul>
 
           <h4>찾기</h4>

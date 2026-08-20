@@ -139,6 +139,7 @@ function loadActiveIntoEditor() {
   tabNameEl.value = tab.name;
   chipLabel.textContent = tab.name;
   syncChipColor();
+  syncFileChips();          // 밖에서 지워진 첨부가 있으면 걷어낸다
   editor.scrollTop = 0;
   deselectImage();
 
@@ -813,7 +814,7 @@ function insertFileChip({ token, name, size }) {
   editor.focus();
   document.execCommand('insertHTML', false,
     `<span class="file-chip" contenteditable="false" data-file="${encodeURIComponent(token)}" `
-    + `title="클릭해서 열기 · 우클릭하면 폴더에서 보기">`
+    + `title="클릭해서 열기 · 우클릭하면 메뉴 (열기 · 폴더 · 삭제)">`
     + `📎<span class="fname">${escapeHtml(name)}</span>`
     + `<span class="fsize">${prettySize(size)}</span></span>&nbsp;`);
   queueSave();
@@ -987,13 +988,81 @@ editor.addEventListener('dblclick', (e) => {
   togglePin();
 });
 
-// 첨부파일 우클릭 → 저장된 위치를 탐색기에서 보여준다
+/* ─── 첨부파일 우클릭 메뉴 ───
+ * 예전에는 우클릭이 곧바로 폴더 열기였다. 그러다 보니 첨부를 지울 방법이
+ * 사실상 없었다(칩을 백스페이스로 지우는 것 말고는). 메뉴로 바꿔 삭제를 넣는다.
+ */
+let menuChip = null;
+
 editor.addEventListener('contextmenu', (e) => {
   const chip = e.target.closest('.file-chip');
   if (!chip) return;
   e.preventDefault();
-  api.revealFile(chip.dataset.file);
+  menuChip = chip;
+  openPopover($('#pop-file'), chip);
 });
+
+/** 칩을 메모에서 빼고, 참조가 사라진 파일은 정리한다. */
+function removeChip(chip) {
+  chip.remove();
+  flushSave();
+  api.pruneImages();   // 아무도 안 쓰게 된 파일을 지운다
+}
+
+for (const btn of document.querySelectorAll('#pop-file button[data-file-act]')) {
+  btn.addEventListener('click', async () => {
+    const chip = menuChip;
+    closeAllPopovers();
+    menuChip = null;
+    if (!chip) return;
+
+    const token = chip.dataset.file;
+    const name = (chip.querySelector('.fname') || {}).textContent || '첨부파일';
+
+    if (btn.dataset.fileAct === 'open') {
+      const res = await api.openFile(token);
+      if (res && res.ok === false && res.reason) toast(res.reason);
+      return;
+    }
+    if (btn.dataset.fileAct === 'reveal') { api.revealFile(token); return; }
+
+    const ok = await askConfirm(`'${name}' 을(를) 지울까요?
+메모에서 빠지고 저장된 파일도 지워집니다.`,
+      { danger: true, yes: '삭제' });
+    if (!ok) return;
+    removeChip(chip);
+    toast(`'${name}' 을(를) 지웠습니다`);
+  });
+}
+
+/*
+ * 탐색기에서 첨부파일을 직접 지웠을 때, 메모에 남은 칩은 눌러도 아무것도 열리지 않는
+ * 껍데기가 된다. 실제로 없어진 것만 골라 조용히 걷어낸다.
+ */
+async function syncFileChips() {
+  const chips = [...editor.querySelectorAll('.file-chip')];
+  if (!chips.length) return;
+
+  const missing = await api.missingFiles(chips.map((c) => c.dataset.file));
+  if (!missing.length) return;
+
+  const gone = new Set(missing);
+  const names = [];
+  for (const chip of chips) {
+    if (!gone.has(chip.dataset.file)) continue;
+    names.push((chip.querySelector('.fname') || {}).textContent || '첨부파일');
+    chip.remove();
+  }
+  if (!names.length) return;
+
+  flushSave();
+  toast(names.length === 1
+    ? `'${names[0]}' 파일이 없어져 메모에서도 뺐습니다`
+    : `없어진 첨부 ${names.length}개를 메모에서 뺐습니다`);
+}
+
+// 폴더가 바뀌면(= 밖에서 지웠을 수 있으면) 지금 보고 있는 메모를 정리한다
+api.onFilesChanged(() => { syncFileChips(); });
 
 function setImageWidth(pct) {
   if (!selectedImg) return;

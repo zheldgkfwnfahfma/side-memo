@@ -195,6 +195,71 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       (async () => JSON.stringify(await window.sideMemo.openFile('..%2F..%2Fdata.json')))()`);
     check('폴더 밖은 못 연다', JSON.parse(escape).ok === false, escape);
 
+    // ── 첨부 우클릭 메뉴 ───────────────────────────────
+    const menu = await evalInPage(ws, `
+      (async () => {
+        const buf = new TextEncoder().encode('MENU').buffer;
+        const r = await window.sideMemo.saveFile(buf, '메뉴시험.txt');
+        editor.innerHTML = '';
+        insertFileChip(r);
+        const chip = editor.querySelector('.file-chip');
+        chip.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        return JSON.stringify({
+          open: !document.querySelector('#pop-file').hidden,
+          items: [...document.querySelectorAll('#pop-file button')].map(b => b.dataset.fileAct),
+        });
+      })()`);
+    const mn = JSON.parse(menu);
+    check('첨부 우클릭하면 메뉴가 뜬다', mn.open, menu);
+    check('메뉴에 열기·폴더·삭제가 있다',
+      mn.items.join() === 'open,reveal,delete', mn.items.join());
+
+    // 삭제를 고르면 확인을 거쳐 칩과 파일이 함께 사라진다
+    const del = await evalInPage(ws, `
+      (async () => {
+        const p = new Promise(r => { setTimeout(() => {
+          document.querySelector('#ask-yes').click(); r(); }, 60); });
+        [...document.querySelectorAll('#pop-file button')].find(b => b.dataset.fileAct === 'delete').click();
+        await p;
+        await new Promise(r => setTimeout(r, 400));
+        return editor.querySelectorAll('.file-chip').length;
+      })()`);
+    check('삭제하면 칩이 사라진다', del === 0, String(del));
+    await sleep(500);
+    check('삭제하면 파일도 지워진다',
+      !fs.existsSync(path.join(PROFILE, 'files', '메뉴시험.txt')),
+      fs.readdirSync(path.join(PROFILE, 'files')).join(', '));
+
+    // ── 밖에서 지운 첨부는 메모에서도 걷어낸다 ───────────
+    const outside = await evalInPage(ws, `
+      (async () => {
+        const buf = new TextEncoder().encode('OUT').buffer;
+        const r = await window.sideMemo.saveFile(buf, '밖에서지움.txt');
+        editor.innerHTML = '';
+        insertFileChip(r);
+        flushSave();
+        return editor.querySelectorAll('.file-chip').length;
+      })()`);
+    check('첨부를 하나 넣었다', outside === 1, String(outside));
+
+    // 탐색기에서 지운 것과 같은 상황을 만든다
+    fs.unlinkSync(path.join(PROFILE, 'files', '밖에서지움.txt'));
+    const cleaned = await evalInPage(ws, `
+      (async () => { await syncFileChips(); return editor.querySelectorAll('.file-chip').length; })()`);
+    check('없어진 첨부는 메모에서 빠진다', cleaned === 0, String(cleaned));
+
+    // 멀쩡한 첨부는 건드리지 않아야 한다
+    const kept = await evalInPage(ws, `
+      (async () => {
+        const buf = new TextEncoder().encode('KEEP').buffer;
+        const r = await window.sideMemo.saveFile(buf, '남아있음.txt');
+        editor.innerHTML = '';
+        insertFileChip(r);
+        await syncFileChips();
+        return editor.querySelectorAll('.file-chip').length;
+      })()`);
+    check('멀쩡한 첨부는 그대로 둔다', kept === 1, String(kept));
+
     await evalInPage(ws, "editor.innerHTML = ''; flushSave(); true");
 
     // ── 이미지 장수 제한 없음 ──────────────────────────

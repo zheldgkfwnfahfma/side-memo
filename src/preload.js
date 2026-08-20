@@ -24,6 +24,9 @@ contextBridge.exposeInMainWorld('sideMemo', {
   saveFile: (buffer, name) => ipcRenderer.invoke('files:save', { buffer, name }),
   openFile: (token) => ipcRenderer.invoke('files:open', token),
   revealFile: (token) => ipcRenderer.invoke('files:reveal', token),
+  deleteFile: (token) => ipcRenderer.invoke('files:delete', token),
+  missingFiles: (tokens) => ipcRenderer.invoke('files:missing', tokens),
+  onFilesChanged: (cb) => ipcRenderer.on('files:changed', () => cb()),
 
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   quit: () => ipcRenderer.invoke('app:quit'),

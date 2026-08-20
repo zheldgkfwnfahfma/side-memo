@@ -468,6 +468,32 @@ function reportRecovery() {
   }
 }
 
+/*
+ * 첨부파일 폴더를 지켜본다.
+ * 탐색기에서 파일을 지우면 메모에 남은 칩은 열리지 않는 껍데기가 된다.
+ * 폴더가 바뀌면 창들에게 알려 각자 자기 메모를 정리하게 한다.
+ */
+let fileWatcher = null;
+let fileWatchTimer = null;
+
+function startFileWatch() {
+  if (fileWatcher) { try { fileWatcher.close(); } catch { /* 이미 닫힘 */ } }
+  fileWatcher = null;
+  try {
+    fileWatcher = fs.watch(store.fileDir, () => {
+      // 파일 하나를 지워도 이벤트가 여러 번 온다. 잠깐 모았다가 한 번만 알린다.
+      clearTimeout(fileWatchTimer);
+      fileWatchTimer = setTimeout(() => {
+        for (const pane of panes.values()) {
+          if (!pane.win.isDestroyed()) pane.win.webContents.send('files:changed');
+        }
+      }, 250);
+    });
+  } catch (e) {
+    console.error('첨부 폴더를 지켜볼 수 없습니다:', e.message);
+  }
+}
+
 function broadcastSettings() {
   for (const pane of panes.values()) {
     if (!pane.win.isDestroyed()) pane.win.webContents.send('settings:changed', store.get().settings);
@@ -776,6 +802,7 @@ function registerIpc() {
       if (response === 1) {
         writeDataDir(target);
         store = new Store(target);
+        startFileWatch();
         reloadAllWindows();
         return { ok: true, dir: target };
       }
@@ -787,6 +814,7 @@ function registerIpc() {
       writeDataDir(target);
       store = new Store(target);
       startBackups();
+      startFileWatch();
       reloadAllWindows();
       return { ok: true, dir: target };
     } catch (err) {
@@ -968,6 +996,22 @@ function registerIpc() {
     if (file) shell.showItemInFolder(file);
   });
 
+  ipcMain.handle('files:delete', (_e, token) => {
+    const file = resolveStoredFile(token);
+    if (!file) return { ok: true };          // 이미 없으면 지운 것과 같다
+    try {
+      fs.unlinkSync(file);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, reason: err.message };
+    }
+  });
+
+  /** 넘어온 토큰 중 실제 파일이 없어진 것만 돌려준다. */
+  ipcMain.handle('files:missing', (_e, tokens) => (
+    (Array.isArray(tokens) ? tokens : []).filter((t) => !resolveStoredFile(t))
+  ));
+
   ipcMain.handle('shell:openExternal', (_e, url) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
   });
@@ -1072,6 +1116,7 @@ if (!app.requestSingleInstanceLock()) {
     buildTray();
     registerIpc();
     startCursorWatch();
+    startFileWatch();
 
     const failed = applyShortcuts();
     if (failed.length) console.warn('등록하지 못한 단축키:', failed.join(', '));
@@ -1099,6 +1144,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => { /* 트레이 앱이므로 종료하지 않는다 */ });
   app.on('before-quit', () => { quitting = true; });
   app.on('will-quit', () => {
+    if (fileWatcher) { try { fileWatcher.close(); } catch { /* 이미 닫힘 */ } }
     clearInterval(watchTimer);
     clearInterval(backupTimer);
     globalShortcut.unregisterAll();

@@ -282,6 +282,10 @@ button { font-family: inherit; cursor: pointer; }
 }
 .popover.menu button:hover { background: #f1f0fb; }
 
+/* 되돌릴 수 없는 항목은 눈에 띄게 구분한다 */
+.popover.menu button[data-file-act="delete"] { color: #b91c1c; }
+.popover.menu button[data-file-act="delete"]:hover { background: #fee2e2; }
+
 .popover.swatches {
   display: grid;
   grid-template-columns: repeat(6, 20px);
