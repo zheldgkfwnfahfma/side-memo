@@ -64,7 +64,13 @@ if (hasNonAscii) {
   }
 }
 
-const ok = run('npx', ['electron-builder', '--win', '--x64'], buildDir);
+/*
+ * --publish never 를 꼭 준다.
+ * 이게 없으면 electron-builder 가 git 태그를 보고 "릴리스하라는 뜻"으로 넘겨짚어
+ * 스스로 GitHub 에 올리려 하고, 토큰이 없다며 빌드를 실패로 끝낸다.
+ * 올리는 일은 우리가 따로 한다(로컬은 손으로, CI 는 gh release 로).
+ */
+const ok = run('npx', ['electron-builder', '--win', '--x64', '--publish', 'never'], buildDir);
 
 if (tmp) {
   const from = path.join(tmp, 'dist');
