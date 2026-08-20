@@ -31,6 +31,19 @@ const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 // 윈도우에서 파일 이름에 쓸 수 없는 글자들 (마지막은 역슬래시)
 const FORBIDDEN = '<>:"/|?*' + String.fromCharCode(92);
 
+/*
+ * 경로에서 마지막 이름만 뽑는다.
+ * path.basename 은 실행 중인 OS 기준이라, 리눅스에서는 윈도우 경로의 역슬래시를
+ * 구분자로 보지 않는다. 이름을 다듬는 건 보안과 직결되므로 두 구분자를 모두 직접 본다.
+ */
+function lastSegment(p) {
+  const str = String(p || '');
+  const SEP = ['/', String.fromCharCode(92)];
+  let cut = -1;
+  for (let i = 0; i < str.length; i++) if (SEP.includes(str[i])) cut = i;
+  return str.slice(cut + 1);
+}
+
 function scrub(name) {
   let out = '';
   for (const ch of String(name)) {
@@ -41,7 +54,7 @@ function scrub(name) {
 
 function safeStoredName(original) {
   // 폴더 경로가 섞여 들어와도 마지막 이름만 쓴다
-  let name = scrub(path.basename(String(original || '')));
+  let name = scrub(lastSegment(original));
   name = name.replace(/[. ]+$/, '');        // 윈도우는 끝의 점·공백을 무시한다
   if (/^[.]+$/.test(name)) name = '';       // '.' '..' 는 이름이 아니다
   if (!name) return { stem: '첨부파일', ext: '' };

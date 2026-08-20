@@ -54,13 +54,13 @@ function encodePNG(size, pixelAt) {
   ]);
 }
 
-/** 보라 라운드 사각형 + 오른쪽에 살짝 빼꼼 나온 노란 메모지 */
+/** 보라 라운드 사각형 + 오른쪽으로 살짝 나온 노란 메모지 */
 function icon(size) {
   const s = size;
   const u = s / 32; // 32px 기준 좌표를 실제 크기로 환산
   return encodePNG(s, (x, y) => {
     const px = x / u, py = y / u;
-    // 노란 메모지 (오른쪽으로 빼꼼)
+    // 노란 메모지 (오른쪽으로 살짝 나오게)
     if (px >= 17 && px <= 30 && py >= 9 && py <= 25) return [251, 243, 176, 255];
     // 보라 본체 (라운드 사각형)
     const inX = px >= 3 && px <= 20, inY = py >= 4 && py <= 28;
