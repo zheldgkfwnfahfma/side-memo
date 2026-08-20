@@ -1,7 +1,7 @@
 {
   "name": "side-memo",
   "productName": "사이드 메모",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "화면 가장자리에서 나오는 탭형 스티커 메모",
   "main": "src/main/main.js",
   "scripts": {

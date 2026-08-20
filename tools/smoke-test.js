@@ -195,6 +195,68 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       (async () => JSON.stringify(await window.sideMemo.openFile('..%2F..%2Fdata.json')))()`);
     check('폴더 밖은 못 연다', JSON.parse(escape).ok === false, escape);
 
+    // ── Ctrl+드래그 / Ctrl+휠 로 글자 크기 ──────────────
+    const fontDrag = await evalInPage(ws, `
+      (() => {
+        activeTab().fontSize = null;
+        applySettings();
+        const before = effFontSize();
+        const opt = (y, extra) => Object.assign(
+          { bubbles: true, cancelable: true, clientX: 60, clientY: y, pointerId: 7, button: 0 }, extra);
+        editor.dispatchEvent(new PointerEvent('pointerdown', opt(300, { ctrlKey: true })));
+        editor.dispatchEvent(new PointerEvent('pointermove', opt(260, { ctrlKey: true })));
+        editor.dispatchEvent(new PointerEvent('pointerup',   opt(260, { ctrlKey: true })));
+        return JSON.stringify({ before, after: effFontSize(), own: activeTab().fontSize });
+      })()`);
+    const fd = JSON.parse(fontDrag);
+    check('위로 끌면 글자가 커진다', fd.after === fd.before + 5, fontDrag);
+    check('끈 값이 이 메모에만 붙는다', fd.own === fd.after, String(fd.own));
+
+    const fontDown = await evalInPage(ws, `
+      (() => {
+        const before = effFontSize();
+        const opt = (y) => ({ bubbles: true, cancelable: true, clientX: 60, clientY: y,
+                              pointerId: 8, button: 0, ctrlKey: true });
+        editor.dispatchEvent(new PointerEvent('pointerdown', opt(300)));
+        editor.dispatchEvent(new PointerEvent('pointermove', opt(340)));
+        editor.dispatchEvent(new PointerEvent('pointerup',   opt(340)));
+        return JSON.stringify({ before, after: effFontSize() });
+      })()`);
+    const fdn = JSON.parse(fontDown);
+    check('아래로 끌면 작아진다', fdn.after === fdn.before - 5, fontDown);
+
+    const noCtrl = await evalInPage(ws, `
+      (() => {
+        const before = effFontSize();
+        const opt = (y) => ({ bubbles: true, cancelable: true, clientX: 60, clientY: y,
+                              pointerId: 9, button: 0 });
+        editor.dispatchEvent(new PointerEvent('pointerdown', opt(300)));
+        editor.dispatchEvent(new PointerEvent('pointermove', opt(200)));
+        editor.dispatchEvent(new PointerEvent('pointerup',   opt(200)));
+        return effFontSize() === before;
+      })()`);
+    check('Ctrl 없이 끌면 크기는 그대로 (글자 선택용)', noCtrl === true);
+
+    const wheel = await evalInPage(ws, `
+      (() => {
+        const before = effFontSize();
+        editor.dispatchEvent(new WheelEvent('wheel',
+          { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -120 }));
+        return JSON.stringify({ before, after: effFontSize() });
+      })()`);
+    const wh = JSON.parse(wheel);
+    check('Ctrl+휠 위로 굴리면 커진다', wh.after === wh.before + 1, wheel);
+
+    const clamp = await evalInPage(ws, `
+      (() => {
+        applyFontSize(999); const hi = effFontSize();
+        applyFontSize(1);   const lo = effFontSize();
+        return JSON.stringify({ hi, lo });
+      })()`);
+    check('11~28px 를 벗어나지 않는다', JSON.parse(clamp).hi === 28 && JSON.parse(clamp).lo === 11, clamp);
+    await evalInPage(ws, 'activeTab().fontSize = null; applySettings(); flushSave(); true');
+    await sleep(300);
+
     // ── 첨부 우클릭 메뉴 ───────────────────────────────
     const menu = await evalInPage(ws, `
       (async () => {

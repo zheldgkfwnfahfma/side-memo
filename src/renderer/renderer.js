@@ -940,6 +940,10 @@ window.addEventListener('resize', placeImageHandle);
 })();
 
 editor.addEventListener('click', async (e) => {
+  // Ctrl+드래그로 글자 크기를 바꾼 직후라면, 뒤따라오는 클릭은 무시한다
+  // (안 그러면 링크 위에서 끝냈을 때 브라우저가 열린다)
+  if (fontScrubbed) { fontScrubbed = false; return; }
+
   const link = e.target.closest('a');
   if (link && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
@@ -1063,6 +1067,81 @@ async function syncFileChips() {
 
 // 폴더가 바뀌면(= 밖에서 지웠을 수 있으면) 지금 보고 있는 메모를 정리한다
 api.onFilesChanged(() => { syncFileChips(); });
+
+/* ─── 글자 크기 바로 바꾸기 ───
+ * 설정까지 들어가지 않고 그 자리에서 조절한다. 폭을 모서리 드래그로 바꾸는 것과 같은 결이고,
+ * 폭과 마찬가지로 '이 메모만' 에 적용된다.
+ *
+ *   Ctrl + 위아래 드래그 : 끌면서 바로 커지고 작아진다 (위로 크게, 아래로 작게)
+ *   Ctrl + 휠           : 한 칸씩
+ */
+const MIN_FONT = 11;      // 설정 슬라이더와 같은 범위
+const MAX_FONT = 28;
+const FONT_DRAG_PX = 8;   // 이만큼 끌 때마다 1px
+
+let fontScrubbed = false; // 방금 끌어서 바꿨는지 (뒤따르는 click 을 걸러내려고)
+
+function applyFontSize(px) {
+  const v = Math.max(MIN_FONT, Math.min(MAX_FONT, Math.round(px)));
+  const tab = activeTab();
+  if (!tab || tab.fontSize === v) return v;
+  tab.fontSize = v;         // 폭과 같이 '이 메모만' 에 붙는다
+  applySettings();
+  toast(`글자 크기 ${v}px`);
+  return v;
+}
+
+/** 조절이 끝났을 때 한 번만 저장하고 설정 화면 표시도 맞춘다. */
+function commitFontSize() {
+  flushSave();
+  if (!$('#settings').hidden) syncSettingsUI();
+}
+
+(() => {
+  let scrubbing = false;
+  let startY = 0;
+  let startSize = 0;
+
+  editor.addEventListener('pointerdown', (e) => {
+    fontScrubbed = false;
+    if (!e.ctrlKey || e.button !== 0) return;
+    e.preventDefault();                       // 글자 선택 대신 크기 조절
+    scrubbing = true;
+    startY = e.clientY;
+    startSize = effFontSize();
+    // 포인터가 이미 놓인 뒤면 예외가 난다. 붙잡지 못해도 조절 자체는 진행한다.
+    try { editor.setPointerCapture(e.pointerId); } catch { /* 못 붙잡아도 괜찮다 */ }
+  });
+
+  editor.addEventListener('pointermove', (e) => {
+    if (!scrubbing) return;
+    const steps = Math.round((startY - e.clientY) / FONT_DRAG_PX);   // 위로 끌면 커진다
+    if (!steps && !fontScrubbed) return;
+    fontScrubbed = true;
+    applyFontSize(startSize + steps);
+  });
+
+  function end(e) {
+    if (!scrubbing) return;
+    scrubbing = false;
+    try {
+      if (e && editor.hasPointerCapture(e.pointerId)) editor.releasePointerCapture(e.pointerId);
+    } catch { /* 이미 놓였다 */ }
+    if (fontScrubbed) commitFontSize();
+  }
+  editor.addEventListener('pointerup', end);
+  editor.addEventListener('pointercancel', end);
+
+  // Ctrl+휠 은 어디서나 쓰는 방식이라 같이 지원한다
+  let wheelTimer = null;
+  editor.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();                       // 페이지 확대 대신 글자 크기
+    applyFontSize(effFontSize() + (e.deltaY < 0 ? 1 : -1));
+    clearTimeout(wheelTimer);
+    wheelTimer = setTimeout(commitFontSize, 250);   // 굴리는 동안 매번 저장하지 않는다
+  }, { passive: false });
+})();
 
 function setImageWidth(pct) {
   if (!selectedImg) return;
