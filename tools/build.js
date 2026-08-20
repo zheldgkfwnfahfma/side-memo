@@ -72,24 +72,43 @@ if (hasNonAscii) {
  */
 const ok = run('npx', ['electron-builder', '--win', '--x64', '--publish', 'never'], buildDir);
 
-if (tmp) {
-  const from = path.join(tmp, 'dist');
-  if (fs.existsSync(from)) {
+/*
+ * 가져올 파일 이름을 정확히 짚는다.
+ * '.exe 로 끝나면 전부'로 두면 SideMemo-Setup-x.y.z.__uninstaller.exe(제거 프로그램)까지
+ * 딸려온다. 빌드가 중간에 죽으면 그게 dist 에 남아 설치본인 척하게 된다.
+ */
+const SETUP = `SideMemo-Setup-${require('../package.json').version}.exe`;
+
+// 빌드가 실패했으면 아무것도 가져오지 않는다. 반쪽짜리 결과물이 남는 게 제일 위험하다.
+if (ok && tmp) {
+  const src = path.join(tmp, 'dist', SETUP);
+  if (fs.existsSync(src)) {
     fs.mkdirSync(DIST, { recursive: true });
-    for (const name of fs.readdirSync(from)) {
-      const src = path.join(from, name);
-      // 설치본만 가져온다. 부산물(blockmap, 디버그 로그)은 배포할 필요가 없다.
-      if (fs.statSync(src).isFile() && name.endsWith('.exe')) {
-        fs.copyFileSync(src, path.join(DIST, name));
-      }
-    }
+    fs.copyFileSync(src, path.join(DIST, SETUP));
     console.log(`\n결과물을 옮겼습니다 → ${DIST}`);
   }
+}
+if (tmp) {
   try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 }); } catch { /* 임시 폴더 */ }
 }
 
 if (!ok) {
   console.error('\n빌드 실패');
+  process.exit(1);
+}
+
+/*
+ * 크기를 확인한다. Electron 앱이라 정상이면 70MB 를 넘는다.
+ * 몇백 KB 짜리가 나왔다면 껍데기만 만들어진 것이므로 배포하지 않도록 여기서 끊는다.
+ */
+const setupPath = path.join(DIST, SETUP);
+if (!fs.existsSync(setupPath)) {
+  console.error(`\n${SETUP} 이 만들어지지 않았습니다`);
+  process.exit(1);
+}
+const sizeMB = fs.statSync(setupPath).size / 1024 / 1024;
+if (sizeMB < 30) {
+  console.error(`\n설치본이 너무 작습니다 (${sizeMB.toFixed(1)} MB). 빌드가 온전히 끝나지 않았습니다.`);
   process.exit(1);
 }
 
