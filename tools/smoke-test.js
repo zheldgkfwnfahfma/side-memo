@@ -1073,22 +1073,77 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       })()`);
     check('설정 화면이 열려 있으면 F5 무시', f5Blocked === '', JSON.stringify(f5Blocked));
 
-    // ── 기능 안내 ─────────────────────────────────────
+    // ── 도움말 ────────────────────────────────────────
     const help = await evalInPage(ws, `
       (() => {
-        const el = document.querySelector('#help');
+        const btn = document.querySelector('#btn-help');
+        const sheet = document.querySelector('#help-sheet');
+        const hiddenAtStart = sheet.hidden;
+        btn.click();
         return JSON.stringify({
-          exists: !!el,
-          collapsed: !el.open,
-          sections: el.querySelectorAll('h4').length,
-          keysFilled: [...el.querySelectorAll('[data-help-sc]')].every(x => x.textContent.trim().length > 0),
-          keyText: el.querySelector('[data-help-sc="toggle"]').textContent,
+          hasButton: !!btn,
+          hiddenAtStart,
+          open: !sheet.hidden,
+          cards: sheet.querySelectorAll('.help-card').length,
+          keysFilled: [...sheet.querySelectorAll('[data-help-sc]')].every(x => x.textContent.trim().length > 0),
+          keyText: sheet.querySelector('[data-help-sc="toggle"]').textContent,
+          oldGone: !document.querySelector('#settings details'),
         });
       })()`);
     const hp = JSON.parse(help);
-    check('설정 맨 위에 기능 안내가 있다', hp.exists && hp.sections >= 7, help);
-    check('안내는 접힌 채로 시작', hp.collapsed, help);
-    check('안내의 단축키가 실제 설정값으로 채워짐', hp.keysFilled && /Ctrl/.test(hp.keyText), hp.keyText);
+    check('헤더에 도움말 버튼이 있다', hp.hasButton && hp.hiddenAtStart, help);
+    check('누르면 도움말 화면이 열린다', hp.open && hp.cards >= 8, help);
+    check('도움말의 단축키가 실제 설정값으로 채워짐', hp.keysFilled && /Ctrl/.test(hp.keyText), hp.keyText);
+    check('설정 안의 접힌 안내는 없어졌다', hp.oldGone);
+
+    const helpEsc = await evalInPage(ws, `
+      (() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        return JSON.stringify({ helpHidden: document.querySelector('#help-sheet').hidden, panelOpen: expanded });
+      })()`);
+    check('Esc 는 도움말만 닫고 메모지는 둔다',
+      JSON.parse(helpEsc).helpHidden && JSON.parse(helpEsc).panelOpen, helpEsc);
+
+    const helpF1 = await evalInPage(ws, `
+      (() => {
+        const sheet = document.querySelector('#help-sheet');
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F1', bubbles: true, cancelable: true }));
+        const opened = !sheet.hidden;
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F1', bubbles: true, cancelable: true }));
+        return JSON.stringify({ opened, closed: sheet.hidden });
+      })()`);
+    check('F1 로 열고 다시 F1 로 닫는다',
+      JSON.parse(helpF1).opened && JSON.parse(helpF1).closed, helpF1);
+
+    // 설정 안의 입구 버튼 → 도움말로 넘어가고 설정은 닫힌다 (한 번에 하나만)
+    const helpFromSettings = await evalInPage(ws, `
+      (() => {
+        openSettingsSheet();
+        const entry = document.querySelector('#open-help');
+        entry.click();
+        const r = {
+          entryShown: !!entry,
+          helpOpen: !document.querySelector('#help-sheet').hidden,
+          settingsClosed: document.querySelector('#settings').hidden,
+        };
+        openSettingsSheet();
+        r.helpClosedBySettings = document.querySelector('#help-sheet').hidden;
+        document.querySelector('#settings-close').click();
+        return JSON.stringify(r);
+      })()`);
+    const hs = JSON.parse(helpFromSettings);
+    check('설정에서 도움말로 넘어간다', hs.entryShown && hs.helpOpen && hs.settingsClosed, helpFromSettings);
+    check('설정을 열면 도움말은 닫힌다', hs.helpClosedBySettings, helpFromSettings);
+
+    const f5InHelp = await evalInPage(ws, `
+      (() => {
+        editor.innerHTML = '';
+        openHelpSheet();
+        const r = insertStamp({});
+        document.querySelector('#help-close').click();
+        return JSON.stringify({ inserted: r, text: editor.textContent });
+      })()`);
+    check('도움말이 열려 있으면 F5 무시', JSON.parse(f5InHelp).inserted === false, f5InHelp);
 
     // ── 서식 / 링크 ───────────────────────────────────
     const bold = await evalInPage(ws, `

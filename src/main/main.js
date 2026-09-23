@@ -7,6 +7,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 const { Store } = require('./store');
+const { pickDisplay, hintOf, refreshDocks } = require('./displays');
 const { createShare, htmlToText, safeFileName, uniqueStoredName } = require('./share');
 
 const TAB_W = 34;              // 화면 가장자리에 항상 남아 있는 탭 스트립 폭
@@ -114,26 +115,27 @@ protocol.registerSchemesAsPrivileged([
 
 // ---------------------------------------------------------------- 모니터 / 창 배치
 
+/* 모니터 id 는 재부팅하면 바뀔 수 있다. 찾는 규칙은 displays.js 에 있다. */
+function resolveDisplay(dock) {
+  return pickDisplay(screen.getAllDisplays(), screen.getPrimaryDisplay().id, dock);
+}
+
 function displayFor(dock) {
-  if (dock && dock.displayId != null) {
-    const found = screen.getAllDisplays().find((d) => d.id === dock.displayId);
-    if (found) return found;
-  }
-  return screen.getPrimaryDisplay();
+  return resolveDisplay(dock).display;
 }
 
-/**
- * displayId 는 null(주 모니터를 따라감) 또는 실제 id 로 저장된다.
- * 자리가 겹치는지 볼 때는 둘을 같은 값으로 봐야 한다.
- */
-function normDisplay(id) {
-  return id == null ? screen.getPrimaryDisplay().id : id;
+/** 저장된 모니터 정보를 지금 화면에 맞춰 고쳐 적는다. 규칙은 displays.js 의 refreshDocks. */
+function refreshDockDisplays() {
+  const changed = refreshDocks(store.get().docks, screen.getAllDisplays(), screen.getPrimaryDisplay().id);
+  if (changed) store.save();
+  return changed;
 }
 
+/** 자리가 겹치는지는 '실제로 붙어 있는 모니터' 기준으로 본다. null 은 주 모니터다. */
 function isSpotTaken(displayId, edge, exceptId = null) {
-  const target = normDisplay(displayId);
+  const target = displayId == null ? screen.getPrimaryDisplay().id : displayId;
   return store.get().docks.some((d) => (
-    d.id !== exceptId && d.edge === edge && normDisplay(d.displayId) === target
+    d.id !== exceptId && d.edge === edge && displayFor(d).id === target
   ));
 }
 
@@ -166,6 +168,7 @@ function reposition(dockId) {
   const pane = panes.get(dockId);
   const dock = store.getDock(dockId);
   if (!pane || !dock || pane.win.isDestroyed()) return;
+  if (pane.resizing) return;   // 모서리를 끄는 중에 창 크기를 되돌리면 드래그가 끊긴다
   pane.win.setBounds(boundsFor(dock, effectiveWidth(pane)));
 }
 
@@ -336,7 +339,7 @@ function startCursorWatch() {
 
 function dockLabel(dock) {
   const displays = displayList();
-  const i = displays.findIndex((d) => d.id === (dock.displayId ?? displays.find((x) => x.isPrimary).id));
+  const i = displays.findIndex((d) => d.id === displayFor(dock).id);
   const side = dock.edge === 'right' ? '오른쪽' : '왼쪽';
   return displays.length > 1 ? `모니터 ${i + 1} · ${side}` : side;
 }
@@ -855,6 +858,10 @@ function registerIpc() {
     }
     dock.edge = edge;
     dock.displayId = displayId;
+    // 고른 모니터를 재부팅 뒤에도 다시 찾을 수 있게 화면 좌표를 같이 남긴다
+    const picked = displayId == null ? null : screen.getAllDisplays().find((d) => d.id === displayId);
+    if (picked) dock.displayHint = hintOf(picked);
+    else delete dock.displayHint;
     store.save();
     reposition(dock.id);
     broadcastDocks();
@@ -867,6 +874,8 @@ function registerIpc() {
       for (const edge of ['right', 'left']) {
         if (!isSpotTaken(d.id, edge)) {
           const dock = store.addDock(edge, d.isPrimary ? null : d.id);
+          const disp = !d.isPrimary && screen.getAllDisplays().find((x) => x.id === d.id);
+          if (disp) { dock.displayHint = hintOf(disp); store.save(); }
           createPane(dock);
           broadcastDocks();
           return { ok: true, id: dock.id };
@@ -1112,6 +1121,7 @@ if (!app.requestSingleInstanceLock()) {
     // 기본 메뉴를 없앤다. Ctrl+R / F5 가 새로고침으로 먹히면 편집 중인 메모가 날아간다.
     if (!DEV) Menu.setApplicationMenu(null);
 
+    refreshDockDisplays();   // 재부팅으로 모니터 id 가 바뀌었으면 여기서 바로잡는다
     for (const dock of store.get().docks) createPane(dock);
     buildTray();
     registerIpc();
@@ -1123,6 +1133,7 @@ if (!app.requestSingleInstanceLock()) {
     if (DEV) console.log('[displays]', JSON.stringify(displayList()));
 
     const onDisplaysChanged = () => {
+      refreshDockDisplays();
       repositionAll();
       broadcastDocks();
       for (const pane of panes.values()) {
@@ -1132,6 +1143,10 @@ if (!app.requestSingleInstanceLock()) {
     screen.on('display-metrics-changed', onDisplaysChanged);
     screen.on('display-added', onDisplaysChanged);
     screen.on('display-removed', onDisplaysChanged);
+
+    // 윈도우 시작과 함께 켜지면 모니터가 다 잡히기 전에 창을 띄울 수 있다.
+    // '모니터 추가' 알림을 놓쳤더라도 제자리를 찾도록 조금 뒤에 한 번 더 맞춘다.
+    setTimeout(onDisplaysChanged, 5000);
 
     // 개발용: 실행하자마자 패널(과 설정)을 펼쳐 화면을 확인한다.
     if (DEV && process.argv.includes('--open-settings')) {

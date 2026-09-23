@@ -51,6 +51,7 @@ jobs:
         run: |
           node tools/share-test.js
           node tools/store-test.js
+          node tools/display-test.js
 
       - name: 태그와 package.json 버전이 같은지 확인
         id: ver

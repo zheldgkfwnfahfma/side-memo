@@ -19,6 +19,7 @@
       <div class="head-actions">
         <button id="btn-search" class="icon-btn" title="모든 메모에서 찾기 (Ctrl+F)">🔍</button>
         <button id="btn-pin" class="icon-btn" title="고정 (닫히지 않게)">📌</button>
+        <button id="btn-help" class="icon-btn help-btn" title="도움말 (F1)">?</button>
         <button id="btn-settings" class="icon-btn" title="설정">⚙</button>
         <button id="btn-close" class="icon-btn" title="닫기">✕</button>
       </div>
@@ -116,32 +117,36 @@
       </div>
     </div>
 
-    <!-- ─────────── 설정 시트 ─────────── -->
-    <div id="settings" class="sheet" hidden>
+    <!-- ─────────── 도움말 시트 ─────────── -->
+    <div id="help-sheet" class="sheet" hidden>
       <div class="sheet-head">
-        <strong>설정</strong>
-        <button id="settings-close" class="icon-btn">✕</button>
+        <strong>도움말</strong>
+        <button id="help-close" class="icon-btn" title="닫기 (Esc)">✕</button>
       </div>
 
-      <div class="sheet-body">
-        <details id="help">
-          <summary>이 프로그램으로 할 수 있는 것</summary>
+      <div class="sheet-body help-body">
+        <p class="help-lead">헤더의 <b>?</b> 버튼이나 <code>F1</code> 로 언제든 다시 열 수 있습니다.</p>
 
+        <section class="help-card">
           <h4>열고 닫기</h4>
           <ul>
             <li>가장자리의 <b>탭 제목에 마우스를 올리면</b> 메모지가 나옵니다.</li>
             <li>마우스가 벗어나면 접힙니다. <b>아무 데나 더블클릭</b>하면 고정돼서 안 접힙니다.</li>
-            <li>고정되면 보라색 테두리와 <b>📌 고정됨</b> 배지가 보입니다.</li>
+            <li>고정되면 보라색 테두리와 <b>📌 고정됨</b> 배지가 보입니다. 다시 더블클릭하면 풀립니다.</li>
             <li>접혀 있는 동안에는 탭을 뺀 나머지 영역의 클릭이 <b>아래 창으로 통과</b>합니다.</li>
           </ul>
+        </section>
 
+        <section class="help-card">
           <h4>메모 관리</h4>
           <ul>
             <li>탭 아래 <b>＋</b> 로 새 메모, 제목을 눌러 이름 변경, 왼쪽 아래 알약을 눌러 탭 색 변경.</li>
             <li>탭 <b>우클릭</b> → 휴지통으로. 설정의 휴지통에서 <b>30일 안에 되돌리기</b> 가능합니다.</li>
             <li>탭을 <b>위아래로 끌면</b> 그 탭만 원하는 높이로 옮겨집니다. 가까이 가면 딱 붙습니다.</li>
           </ul>
+        </section>
 
+        <section class="help-card">
           <h4>글쓰기</h4>
           <ul>
             <li>굵게 · 기울임 · 밑줄 · 취소선 · 정렬 · 목록 · 글자색.</li>
@@ -150,44 +155,79 @@
             <li>이미지: 🖼 버튼 · 끌어다 놓기 · 붙여넣기. <b>장수 제한 없음.</b> 클릭하면 크기 조절 손잡이가 나옵니다.</li>
             <li>파일 첨부: 📎 버튼이나 끌어다 놓기. 칩을 <b>클릭하면 열리고</b>, <b>우클릭하면 메뉴</b>(열기 · 폴더 · 삭제)가 뜹니다.</li>
           </ul>
+        </section>
 
+        <section class="help-card">
           <h4>찾기</h4>
           <ul>
             <li>헤더의 <b>🔍</b> 또는 <code>Ctrl+F</code> — 모든 가장자리의 모든 메모를 한 번에 찾습니다.</li>
           </ul>
+        </section>
 
+        <section class="help-card">
           <h4>화면 배치</h4>
           <ul>
             <li>메모지 <b>안쪽 모서리를 끌면</b> 폭이 바뀝니다 (그 메모에만 적용).</li>
             <li>본문에서 <b>Ctrl + 휠</b>로 글자 크기를 바꿉니다 (설정에서 끌 수 있습니다).</li>
             <li>글자 크기·폭은 <b>'이 메모만'</b> 을 켜서 메모별로 다르게 둘 수 있습니다.</li>
             <li><b>가장자리 추가</b>로 화면 좌·우에 각각, 모니터 2대면 <b>최대 4개</b>까지.</li>
+            <li>고른 모니터는 <b>재부팅해도 기억</b>합니다.</li>
             <li><b>탭 보이기</b> 를 바꾸면 평소엔 숨기고 가장자리에 마우스를 댈 때만 나오게 할 수 있습니다.</li>
             <li>발표 중엔 <b>잠시 숨기기</b>(<span data-help-sc="hideAll">Ctrl+Alt+H</span>)로 통째로 감춥니다.</li>
           </ul>
+        </section>
 
+        <section class="help-card">
           <h4>안전장치</h4>
           <ul>
             <li>입력이 멈추면 <b>0.4초 뒤 자동 저장</b>. 따로 저장할 필요가 없습니다.</li>
             <li>지운 메모는 <b>휴지통</b>에 30일, 데이터는 <b>주기적으로 자동 백업</b>됩니다.</li>
             <li>저장 위치를 OneDrive 같은 폴더로 옮기면 <b>다른 PC와 같은 메모</b>를 볼 수 있습니다.</li>
           </ul>
+        </section>
 
+        <section class="help-card">
           <h4>주고받기</h4>
           <ul>
             <li><b>.smemo</b> 로 내보내면 이미지·첨부까지 파일 하나에 담깁니다. 받는 사람은 가져오기만 하면 됩니다.</li>
             <li>앱이 없는 사람에게는 <b>.html</b> 로 내보내면 브라우저에서 바로 보입니다.</li>
           </ul>
+        </section>
 
-          <h4>단축키 (윈도우 어디서나)</h4>
+        <section class="help-card">
+          <h4>단축키</h4>
           <table class="help-keys">
             <tr><td>메모 열기 / 닫기</td><td><span data-help-sc="toggle"></span></td></tr>
             <tr><td>새 메모 추가</td><td><span data-help-sc="newNote"></span></td></tr>
             <tr><td>다음 메모로</td><td><span data-help-sc="nextTab"></span></td></tr>
             <tr><td>잠시 숨기기</td><td><span data-help-sc="hideAll"></span></td></tr>
           </table>
-          <p class="hint">메모지 안에서만: <code>Esc</code> 닫기 · <code>Ctrl+S</code> 즉시 저장 · <code>F5</code> 날짜/시간</p>
-        </details>
+          <p class="hint">위 네 가지는 윈도우 어디서나 동작합니다. 설정에서 바꿀 수 있습니다.</p>
+          <table class="help-keys">
+            <tr><td>도움말</td><td>F1</td></tr>
+            <tr><td>모든 메모에서 찾기</td><td>Ctrl + F</td></tr>
+            <tr><td>날짜·시간 넣기</td><td>F5</td></tr>
+            <tr><td>즉시 저장</td><td>Ctrl + S</td></tr>
+            <tr><td>닫기</td><td>Esc</td></tr>
+          </table>
+          <p class="hint">이쪽은 메모지 안에서만 동작합니다.</p>
+        </section>
+      </div>
+    </div>
+
+    <!-- ─────────── 설정 시트 ─────────── -->
+    <div id="settings" class="sheet" hidden>
+      <div class="sheet-head">
+        <strong>설정</strong>
+        <button id="settings-close" class="icon-btn">✕</button>
+      </div>
+
+      <div class="sheet-body">
+        <button id="open-help" class="help-link" type="button">
+          <span class="help-link-icon">?</span>
+          <span class="help-link-text"><b>도움말</b> — 모든 기능과 단축키 보기</span>
+          <span class="kbd">F1</span>
+        </button>
 
         <div class="field">
           <label>배경색</label>

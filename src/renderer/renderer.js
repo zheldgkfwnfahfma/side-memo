@@ -525,6 +525,7 @@ api.onPanelState(({ expanded: e }) => {
     closeAsk(false);
     closeAllPopovers();
     $('#settings').hidden = true;
+    $('#help-sheet').hidden = true;
   }
 });
 
@@ -1175,9 +1176,32 @@ $('#panel-head').addEventListener('dblclick', (e) => {
   if (e.target.closest('input, button')) return;
   togglePin();
 });
+/*
+ * 도움말.
+ * 예전에는 설정 맨 위에 접힌 채로 있어서 있는 줄 모르고 지나치기 쉬웠다.
+ * 검색·설정과 같은 자리를 쓰는 화면으로 따로 뺀다. 셋 중 하나만 열린다.
+ */
+function openHelpSheet() {
+  closeAllPopovers();
+  $('#search').hidden = true;
+  $('#settings').hidden = true;
+  $('#help-sheet').hidden = false;
+  $('#help-sheet .sheet-body').scrollTop = 0;
+}
+
+function toggleHelpSheet() {
+  if ($('#help-sheet').hidden) openHelpSheet();
+  else $('#help-sheet').hidden = true;
+}
+
+$('#btn-help').addEventListener('click', toggleHelpSheet);
+$('#help-close').addEventListener('click', () => { $('#help-sheet').hidden = true; });
+$('#open-help').addEventListener('click', openHelpSheet);
+
 function openSettingsSheet() {
   closeAllPopovers();
   $('#search').hidden = true;
+  $('#help-sheet').hidden = true;
   $('#settings').hidden = false;
   // 휴지통·백업·저장 위치는 열 때마다 최신 상태를 다시 읽는다.
   renderTrash();
@@ -1347,7 +1371,7 @@ function syncSettingsUI() {
   $('#tabs-offset-val').textContent = pct === 0 ? '맨 위' : pct === 100 ? '맨 아래' : `${pct}%`;
 
   const sel = $('#display-select');
-  if (sel.options.length) sel.value = String(state.dock.displayId ?? primaryDisplayId ?? '');
+  if (sel.options.length) showDockDisplay(sel);
 
   $('#shortcuts-on').checked = s.shortcutsEnabled !== false;
   $('#shortcut-field').classList.toggle('off', s.shortcutsEnabled === false);
@@ -1383,8 +1407,21 @@ async function changeDock(patch) {
   syncSettingsUI();
 }
 
+/**
+ * 모니터 선택칸에 '지금 실제로 붙어 있는 모니터'를 보여준다.
+ * 저장된 모니터를 못 찾아 주 모니터에 떠 있는 경우엔 빈칸 대신 주 모니터를 보여준다.
+ */
+function showDockDisplay(sel) {
+  const want = String(state.dock.displayId ?? primaryDisplayId ?? '');
+  const has = [...sel.options].some((o) => o.value === want);
+  sel.value = has ? want : String(primaryDisplayId ?? '');
+}
+
 function renderDockList(list) {
   state.docks = list;
+  // 재부팅 뒤 메인이 모니터를 다시 찾아 id 를 고쳐 적었을 수 있다
+  const mine = list.find((d) => d.id === state.dock.id);
+  if (mine) state.dock.displayId = mine.displayId;
   const wrap = $('#dock-list');
   wrap.textContent = '';
 
@@ -1437,7 +1474,7 @@ function renderDisplayOptions(list) {
     o.textContent = d.label;
     sel.appendChild(o);
   }
-  sel.value = String(state.dock.displayId ?? primaryDisplayId ?? '');
+  showDockDisplay(sel);
 }
 
 function bindSettings() {
@@ -1575,7 +1612,7 @@ function stamp({ date = true, time = true } = {}) {
 }
 
 function insertStamp(opts) {
-  if (!$('#settings').hidden || !$('#search').hidden || askResolve) return false;
+  if (!$('#settings').hidden || !$('#search').hidden || !$('#help-sheet').hidden || askResolve) return false;
   if (!expanded) setPanel(true, { focus: true });
 
   editor.focus();
@@ -1604,6 +1641,7 @@ function insertStamp(opts) {
   function open() {
     closeAllPopovers();
     $('#settings').hidden = true;
+    $('#help-sheet').hidden = true;
     sheet.hidden = false;
     input.value = '';
     list.textContent = '';
@@ -1949,6 +1987,7 @@ function prettyAccel(accel) {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    if (!$('#help-sheet').hidden) { $('#help-sheet').hidden = true; return; }
     if (!$('#search').hidden) { $('#search').hidden = true; return; }
     if (!$('#settings').hidden) { $('#settings').hidden = true; return; }
     if (document.querySelector('.popover:not([hidden])')) { closeAllPopovers(); return; }
@@ -1961,6 +2000,12 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
     e.preventDefault();
     window.openSearch();
+  }
+  // F1: 도움말 (윈도우 프로그램의 약속)
+  if (e.key === 'F1') {
+    e.preventDefault();
+    if (!expanded) setPanel(true, { focus: true });
+    toggleHelpSheet();
   }
   // F5: 날짜+시간 / Shift+F5: 날짜만 / Ctrl+F5: 시간만
   if (e.key === 'F5') {
