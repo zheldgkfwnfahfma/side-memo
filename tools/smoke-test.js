@@ -56,6 +56,49 @@ async function evalInPage(ws, expression) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/*
+ * 윈도우가 창을 옮기는 것과 똑같이, 바깥에서 Win32 SetWindowPos 로 창을 민다.
+ * 임시 프로필로 띄운 이 테스트 프로세스의 창만 건드린다.
+ */
+const PUSH_PS = [
+  'param([int]$procId, [int]$dx)',
+  'Add-Type @"',
+  'using System; using System.Runtime.InteropServices; using System.Collections.Generic;',
+  'public class W {',
+  '  public delegate bool EnumProc(IntPtr h, IntPtr l);',
+  '  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, IntPtr l);',
+  '  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);',
+  '  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);',
+  '  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);',
+  '  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f);',
+  '  public struct RECT { public int L, T, R, B; }',
+  '  public static List<IntPtr> Of(uint pid) {',
+  '    var list = new List<IntPtr>();',
+  '    EnumWindows((h, l) => { uint p; GetWindowThreadProcessId(h, out p); if (p == pid && IsWindowVisible(h)) list.Add(h); return true; }, IntPtr.Zero);',
+  '    return list;',
+  '  }',
+  '}',
+  '"@',
+  'foreach ($h in [W]::Of($procId)) {',
+  '  $r = New-Object W+RECT; [void][W]::GetWindowRect($h, [ref]$r)',
+  '  if (($r.R - $r.L) -lt 50) { continue }',
+  '  [void][W]::SetWindowPos($h, [IntPtr]::Zero, $r.L + $dx, $r.T + 40, 0, 0, 0x0015)',
+  '  "moved $($r.L) -> $($r.L + $dx)"',
+  '}',
+].join('\r\n');
+
+function pushWindows(pid, dx) {
+  const ps1 = path.join(PROFILE, 'push.ps1');
+  fs.writeFileSync(ps1, PUSH_PS, 'utf8');
+  try {
+    return require('child_process').execFileSync('powershell',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1, '-procId', String(pid), '-dx', String(dx)],
+      { encoding: 'utf8' }).trim();
+  } catch (err) {
+    return 'push failed: ' + err.message;
+  }
+}
+
 (async () => {
   console.log('임시 프로필:', PROFILE, '\n');
   const child = spawn(ELECTRON, ['.', `--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`], {
@@ -434,6 +477,90 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       })()`);
     check('같은 자리로는 못 옮김(충돌 거부)', JSON.parse(dupe).ok === false, dupe);
 
+    // ── 다른 가장자리로 메모 옮기기 (탭을 끌어서 그쪽 띠 위에 놓기) ──
+    const otherTarget = afterAdd.find((t) => t.webSocketDebuggerUrl !== targets[0].webSocketDebuggerUrl);
+    const ws2 = new WebSocket(otherTarget.webSocketDebuggerUrl, { perMessageDeflate: false });
+    await new Promise((r) => ws2.on('open', r));
+    await sleep(800);
+
+    const geomOf = (sock) => evalInPage(sock, `JSON.stringify({
+      x: window.screenX, y: window.screenY, w: window.outerWidth, h: window.outerHeight,
+      edge: state.dock.edge, tabs: state.dock.tabs.map(t => t.name) })`).then(JSON.parse);
+    // 그 창의 탭 띠 한가운데 (화면 좌표)
+    const stripPoint = (g) => ({ x: g.edge === 'right' ? g.x + g.w - 17 : g.x + 17, y: g.y + Math.round(g.h / 2) });
+
+    // 탭 하나를 끌고 나가 at(화면 좌표)에 놓는다
+    const dragOut = (sock, tabIndex, at) => evalInPage(sock, `
+      (async () => {
+        const el = [...document.querySelectorAll('#tabs .tab')][${tabIndex}];
+        const name = el.textContent;
+        const strip = document.querySelector('#tabstrip').getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        const cx = strip.left + strip.width / 2;
+        const far = strip.left > 200 ? strip.left - 300 : strip.right + 300;
+        const ev = (x, y, extra) => Object.assign({ bubbles: true, clientX: x, clientY: y, pointerId: 1 }, extra);
+        el.dispatchEvent(new PointerEvent('pointerdown', ev(cx, r.top + 10)));
+        el.dispatchEvent(new PointerEvent('pointermove', ev(cx, r.top + 30)));
+        el.dispatchEvent(new PointerEvent('pointermove', ev(far, r.top + 30)));
+        const leavingShown = el.classList.contains('leaving');
+        el.dispatchEvent(new PointerEvent('pointerup', ev(far, r.top + 30, { screenX: ${at.x}, screenY: ${at.y} })));
+        await new Promise(res => setTimeout(res, 700));
+        return JSON.stringify({ name, leavingShown, tabs: state.dock.tabs.map(t => t.name),
+                                toast: document.querySelector('#toast').textContent });
+      })()`).then(JSON.parse);
+
+    const g1 = await geomOf(ws);
+    const g2 = await geomOf(ws2);
+    const sourceCount = g1.tabs.length;
+    const moved = await dragOut(ws, sourceCount - 1, stripPoint(g2));
+    await sleep(500);
+    const g2after = await geomOf(ws2);
+    check('멀리 끌고 나가면 빠져나가는 표시가 된다', moved.leavingShown, JSON.stringify(moved));
+    check('다른 가장자리 띠에 놓으면 이쪽에서는 빠진다',
+      moved.tabs.length === sourceCount - 1 && !moved.tabs.includes(moved.name), JSON.stringify(moved.tabs));
+    check('받는 쪽에 그 메모가 들어간다', g2after.tabs.includes(moved.name), JSON.stringify(g2after.tabs));
+    check('옮겼다고 알려준다', /옮겼습니다/.test(moved.toast), moved.toast);
+
+    await sleep(600);
+    const onDiskMove = JSON.parse(fs.readFileSync(path.join(PROFILE, 'data.json'), 'utf8'));
+    const holder = onDiskMove.docks.filter((d) => d.tabs.some((t) => t.name === moved.name));
+    check('파일에도 받는 쪽에만 저장된다',
+      holder.length === 1 && holder[0].tabs.length === g2after.tabs.length, JSON.stringify(holder.map((d) => d.edge)));
+
+    const receivedActive = await evalInPage(ws2, 'activeTab().name');
+    check('받는 쪽에서 옮겨 온 메모가 열린다', receivedActive === moved.name, receivedActive);
+
+    // 되돌려 보내기 (반대 방향도 된다)
+    const back = await dragOut(ws2, g2after.tabs.indexOf(moved.name), stripPoint(await geomOf(ws)));
+    await sleep(500);
+    const g1back = await geomOf(ws);
+    check('반대 방향으로도 옮겨진다', g1back.tabs.includes(moved.name) && !back.tabs.includes(moved.name),
+      JSON.stringify({ src: back.tabs, dst: g1back.tabs }));
+
+    // 마지막 한 장은 못 옮긴다 (빈 가장자리가 생기므로)
+    const last = await dragOut(ws2, 0, stripPoint(await geomOf(ws)));
+    check('마지막 메모는 옮기지 않는다', last.tabs.length === 1 && /마지막/.test(last.toast), JSON.stringify(last));
+
+    // 옆으로 멀리 끌었다가 아무 데도 아닌 곳에 놓으면 제자리로
+    const nowhere = await dragOut(ws, 0, { x: g1.x - 5000, y: g1.y + 100 });
+    check('놓을 곳이 없으면 그대로 둔다', nowhere.tabs.length === g1back.tabs.length, JSON.stringify(nowhere.tabs));
+    check('놓을 곳이 없으면 방법을 알려준다', /탭 띠 위에 놓으면/.test(nowhere.toast), nowhere.toast);
+
+    // ── 창이 밀려나면 제자리로 돌아오는지 ──
+    // 모니터가 절전에서 깨는 등으로 윈도우가 창을 옮기는 상황을, 바깥에서 SetWindowPos 로 흉내 낸다.
+    // (앱 안의 window.moveTo 는 이 창을 움직이지 못한다)
+    const posOf = (sock) => evalInPage(sock, 'JSON.stringify({ x: window.screenX, y: window.screenY })').then(JSON.parse);
+    const home = await posOf(ws2);
+    const pushOut = pushWindows(child.pid, -700);
+    await sleep(150);
+    const pushedTo = await posOf(ws2);
+    await sleep(2500);
+    const backTo = await posOf(ws2);
+    check('밖에서 창을 밀어 볼 수 있다', pushedTo.x !== home.x, JSON.stringify({ home, pushedTo, pushOut }));
+    check('밀려난 창이 제자리로 돌아온다', backTo.x === home.x && backTo.y === home.y, JSON.stringify({ home, backTo }));
+    check('밀려난 기록이 남는다', fs.existsSync(path.join(PROFILE, 'placement.log')));
+    ws2.close();
+
     const removed = await evalInPage(ws, `
       (async () => JSON.stringify(await window.sideMemo.removeDock(
         state.docks.find(d => d.id !== state.dock.id).id)))()`);
@@ -576,7 +703,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         const els = [...document.querySelectorAll('#tabs .tab')];
         const el = els[0];
         const before = parseFloat(el.style.top);
-        const opts = (y) => ({ bubbles: true, clientX: 10, clientY: y, pointerId: 1 });
+        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1 });
         const r = el.getBoundingClientRect();
         el.dispatchEvent(new PointerEvent('pointerdown', opts(r.top + 5)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 40)));
@@ -616,7 +743,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         const r = el.getBoundingClientRect();
         const from = parseFloat(el.style.top);
         const delta = (wanted + 7) - from;                    // 7px 어긋나게 놓는다
-        const opts = (y) => ({ bubbles: true, clientX: 10, clientY: y, pointerId: 1 });
+        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1 });
         el.dispatchEvent(new PointerEvent('pointerdown', opts(r.top + 5)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 5 + 20)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 5 + delta)));
@@ -638,7 +765,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         const r = el.getBoundingClientRect();
         const from = parseFloat(el.style.top);
         const delta = (vTop + 5) - from;            // 정확히 겹치는 자리로 끈다
-        const opts = (y) => ({ bubbles: true, clientX: 10, clientY: y, pointerId: 1 });
+        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1 });
         el.dispatchEvent(new PointerEvent('pointerdown', opts(r.top + 5)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 25)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 5 + delta)));
@@ -689,6 +816,109 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       })()`);
     check('＋ 버튼이 탭과 안 겹침', JSON.parse(addClear).hit === false, addClear);
 
+    // ── 탭이 많아 띠가 꽉 찼을 때 ───────────────────────
+    // (탭 12개가 거의 다 차 있던 실제 상황: 끌거나 하나 더 넣으면 겹쳤다)
+    const overlapsNow = `(() => {
+      const rects = [...document.querySelectorAll('#tabs .tab'), document.querySelector('#add-tab')]
+        .map(el => ({ t: parseFloat(el.style.top), b: parseFloat(el.style.top) + el.offsetHeight }))
+        .sort((a, b) => a.t - b.t);
+      const strip = document.querySelector('#tabstrip');
+      const reach = Math.max(strip.clientHeight, strip.scrollHeight);
+      let bad = 0;
+      for (let i = 1; i < rects.length; i++) if (rects[i].t < rects[i - 1].b - 0.5) bad++;
+      const out = rects.filter(r => r.t < -0.5 || r.b > reach + 0.5).length;
+      return { bad, out, n: rects.length, scrolling: strip.classList.contains('scrolling') };
+    })()`;
+
+    // 현실적인 경우: 탭이 15개쯤이면 납작하게만 해서 굴리지 않고도 다 보여야 한다
+    const crowdSome = await evalInPage(ws, `
+      (async () => {
+        for (let i = 0; i < 12; i++) {
+          state.dock.tabs.push({ id: 'crowd-' + i, name: '메모' + i, color: '#E9E7E0', html: '',
+            panelWidth: null, fontSize: null, top: (i % 5) / 5, updatedAt: Date.now() });
+        }
+        renderTabs();
+        await new Promise(r => setTimeout(r, 200));
+        const res = ${overlapsNow};
+        res.crowded = document.querySelector('#tabstrip').classList.contains('crowded');
+        res.stripH = document.querySelector('#tabstrip').clientHeight;
+        state.dock.tabs = state.dock.tabs.filter(t => !String(t.id).startsWith('crowd-'));
+        renderTabs();
+        return JSON.stringify(res);
+      })()`);
+    const crowdSomeR = JSON.parse(crowdSome);
+    check('탭 15개: 겹치지 않는다', crowdSomeR.bad === 0, crowdSome);
+    check('탭 15개: 굴리지 않아도 다 보인다', !crowdSomeR.scrolling && crowdSomeR.out === 0, crowdSome);
+
+    const crowd = await evalInPage(ws, `
+      (async () => {
+        const keep = state.dock.tabs.length;
+        for (let i = 0; i < 22; i++) {
+          state.dock.tabs.push({ id: 'crowd-' + i, name: '긴이름메모' + i, color: '#E9E7E0', html: '',
+            panelWidth: null, fontSize: null, top: (i % 7) / 7, updatedAt: Date.now() });
+        }
+        renderTabs();
+        await new Promise(r => setTimeout(r, 200));
+        const res = ${overlapsNow};
+        res.crowded = document.querySelector('#tabstrip').classList.contains('crowded');
+        res.keep = keep;
+        return JSON.stringify(res);
+      })()`);
+    const cw = JSON.parse(crowd);
+    check('탭 25개: 서로 겹치지 않는다', cw.bad === 0, crowd);
+    check('탭 25개: 넘치는 탭은 띠를 굴려서 닿는다', cw.scrolling && cw.out === 0, crowd);
+    check('꽉 차면 탭을 납작하게 만든다', cw.crowded === true, crowd);
+
+    // 꽉 찬 상태에서 끌어도 겹치지 않고, 저장된 위치도 겹치지 않아야 한다
+    const crowdDrag = await evalInPage(ws, `
+      (async () => {
+        const els = [...document.querySelectorAll('#tabs .tab')];
+        const el = els[3];
+        const strip = document.querySelector('#tabstrip').getBoundingClientRect();
+        const cx = strip.left + strip.width / 2;
+        const r = el.getBoundingClientRect();
+        const ev = (y) => ({ bubbles: true, clientX: cx, clientY: y, pointerId: 1 });
+        el.dispatchEvent(new PointerEvent('pointerdown', ev(r.top + 5)));
+        el.dispatchEvent(new PointerEvent('pointermove', ev(r.top + 40)));
+        el.dispatchEvent(new PointerEvent('pointermove', ev(strip.bottom - 5)));
+        const during = ${overlapsNow};
+        el.dispatchEvent(new PointerEvent('pointerup', ev(strip.bottom - 5)));
+        await new Promise(res => setTimeout(res, 400));
+        layoutTabs();
+        const after = ${overlapsNow};
+        return JSON.stringify({ during, after });
+      })()`);
+    const cd = JSON.parse(crowdDrag);
+    check('꽉 찬 띠에서 끄는 동안에도 겹치지 않는다', cd.during.bad === 0 && cd.during.out === 0, crowdDrag);
+    check('꽉 찬 띠에서 놓은 뒤에도 겹치지 않는다', cd.after.bad === 0 && cd.after.out === 0, crowdDrag);
+
+    // 위아래로 끌다가 옆으로 조금 흘러도 정렬은 된다 (다른 가장자리로 오해하지 않는다)
+    const drift = await evalInPage(ws, `
+      (async () => {
+        state.dock.tabs = state.dock.tabs.filter(t => !String(t.id).startsWith('crowd-'));
+        for (const t of state.dock.tabs) t.top = null;
+        renderTabs();
+        await new Promise(r => setTimeout(r, 150));
+        const els = [...document.querySelectorAll('#tabs .tab')];
+        const el = els[0];
+        const name = el.textContent;
+        const strip = document.querySelector('#tabstrip').getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        const ev = (x, y) => ({ bubbles: true, clientX: x, clientY: y, pointerId: 1, screenX: 0, screenY: 0 });
+        const cx = strip.left + strip.width / 2;
+        el.dispatchEvent(new PointerEvent('pointerdown', ev(cx, r.top + 5)));
+        el.dispatchEvent(new PointerEvent('pointermove', ev(cx, r.top + 40)));
+        el.dispatchEvent(new PointerEvent('pointermove', ev(strip.left - 30, r.top + 400)));
+        el.dispatchEvent(new PointerEvent('pointerup', ev(strip.left - 30, r.top + 400)));
+        await new Promise(res => setTimeout(res, 500));
+        const t = state.dock.tabs.find(x => x.name === name);
+        return JSON.stringify({ name, top: t && t.top, count: state.dock.tabs.length });
+      })()`);
+    const dr = JSON.parse(drift);
+    check('옆으로 조금 흘러도 정렬은 된다', dr.top != null && dr.top > 0, drift);
+    await evalInPage(ws, 'for (const t of state.dock.tabs) t.top = null; renderTabs(); flushSave(); true');
+    await sleep(300);
+
     // 끄는 동안 놓일 자리와 밀려나는 이웃이 보여야 한다
     const preview = await evalInPage(ws, `
       (async () => {
@@ -698,7 +928,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         const el = els[2];
         const beforeTops = els.map(x => parseFloat(x.style.top));
         const r = el.getBoundingClientRect();
-        const opts = (y) => ({ bubbles: true, clientX: 10, clientY: y, pointerId: 1 });
+        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1 });
         el.dispatchEvent(new PointerEvent('pointerdown', opts(r.top + 5)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top - 20)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top - 200)));
@@ -731,7 +961,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         const els = [...document.querySelectorAll('#tabs .tab')];
         const el = els[0];
         const r = el.getBoundingClientRect();
-        const opts = (y) => ({ bubbles: true, clientX: 10, clientY: y, pointerId: 1 });
+        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1 });
         el.dispatchEvent(new PointerEvent('pointerdown', opts(r.top + 5)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 30)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 200)));

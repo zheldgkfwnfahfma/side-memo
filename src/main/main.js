@@ -316,12 +316,13 @@ function startCursorWatch() {
         pane.overStrip = overStrip;
         pane.win.webContents.send('panel:edgeHover', overStrip);
         // 숨어 있는 탭은 클릭도 받지 않아야 아래 창이 정상적으로 눌린다
-        if (visibility !== 'always' && !pane.expanded) setInteractive(pane, overStrip);
+        if (visibility !== 'always' && !pane.expanded && !pane.tabDragging) setInteractive(pane, overStrip);
       }
 
       // ── 자동 접힘 ──
       if (mode !== 'mouse') continue;
-      if (!pane.expanded || pane.pinned || pane.resizing || modalCount) continue;
+      // 탭을 끌고 나가는 중에 접어버리면 끌기가 끊긴다
+      if (!pane.expanded || pane.pinned || pane.resizing || pane.tabDragging || modalCount) continue;
       if (pane.win.isFocused()) { pane.outsideSince = 0; continue; }   // 메모를 편집 중이면 유지
 
       const inside = p.x >= b.x - 2 && p.x <= b.x + b.width + 2
@@ -332,7 +333,86 @@ function startCursorWatch() {
       if (!pane.outsideSince) pane.outsideSince = Date.now();
       if (Date.now() - pane.outsideSince >= grace) slideTo(dockId, false);
     }
+
+    // 탭을 다른 가장자리로 끌고 가는 중이면, 놓을 수 있는 곳을 밝혀 준다
+    const dragging = [...panes.values()].find((x) => x.tabDragging);
+    showDropTarget(dragging ? dropTargetAt(p, dragging.dockId) : null);
   }, CURSOR_POLL_MS);
+}
+
+/*
+ * ─── 가장자리 사이로 메모 옮기기 ───
+ * 가장자리마다 창이 따로라서, 탭을 끌고 나간 커서가 어느 가장자리의 띠 위에 있는지는
+ * 메인이 직접 본다. 띠는 34px 로 좁아서 화면 안쪽으로 조금 넉넉하게 잡아 준다.
+ */
+const DROP_SLACK = 60;
+
+function dropTargetAt(p, exceptDockId) {
+  for (const [dockId, pane] of panes) {
+    if (dockId === exceptDockId || pane.win.isDestroyed()) continue;
+    const dock = store.getDock(dockId);
+    if (!dock) continue;
+    const b = pane.win.getBounds();
+    const left = dock.edge === 'right' ? b.x + b.width - TAB_W - DROP_SLACK : b.x;
+    const right = dock.edge === 'right' ? b.x + b.width : b.x + TAB_W + DROP_SLACK;
+    if (p.x >= left && p.x <= right && p.y >= b.y && p.y <= b.y + b.height) return pane;
+  }
+  return null;
+}
+
+let dropTargetDockId = null;
+
+function showDropTarget(pane) {
+  const id = pane ? pane.dockId : null;
+  if (id === dropTargetDockId) return;
+  const prev = dropTargetDockId && panes.get(dropTargetDockId);
+  if (prev && !prev.win.isDestroyed()) prev.win.webContents.send('tabs:dropTarget', false);
+  if (pane && !pane.win.isDestroyed()) pane.win.webContents.send('tabs:dropTarget', true);
+  dropTargetDockId = id;
+}
+
+/*
+ * ─── 창이 제자리에 있는지 지켜보기 ───
+ * 모니터가 절전에 들어갔다 깨거나 연결이 잠깐 끊기면 윈도우가 창을 다른 화면으로 옮긴다.
+ * 돌아올 때 '모니터 바뀜' 알림이 오면 제자리로 돌려놓지만, 그 알림을 놓치면 엉뚱한 화면에
+ * 그대로 남았다. 알림에만 기대지 않고 주기적으로 맞는 자리인지 확인해서 바로잡는다.
+ */
+const PLACEMENT_CHECK_MS = 1500;
+const PLACEMENT_LOG_MAX = 64 * 1024;
+let placementTimer = null;
+
+function startPlacementWatch() {
+  clearInterval(placementTimer);
+  placementTimer = setInterval(() => {
+    if (hiddenAll) return;
+    for (const [dockId, pane] of panes) {
+      if (pane.win.isDestroyed() || pane.resizing) continue;
+      const dock = store.getDock(dockId);
+      if (!dock) continue;
+      const want = boundsFor(dock, effectiveWidth(pane));
+      const got = pane.win.getBounds();
+      const off = Math.abs(got.x - want.x) > 2 || Math.abs(got.y - want.y) > 2
+               || Math.abs(got.width - want.width) > 2 || Math.abs(got.height - want.height) > 2;
+      if (!off) continue;
+      logPlacement(dock, want, got);
+      pane.win.setBounds(want);
+    }
+  }, PLACEMENT_CHECK_MS);
+}
+
+/** 언제 왜 밀려났는지 나중에 알 수 있게 짧게 남긴다 (userData/placement.log). */
+function logPlacement(dock, want, got) {
+  try {
+    const file = path.join(USER_DATA, 'placement.log');
+    const displays = screen.getAllDisplays()
+      .map((d) => `${d.id}@${d.bounds.x},${d.bounds.y} ${d.bounds.width}x${d.bounds.height}`).join(' | ');
+    const line = `${new Date().toISOString()} ${dockLabel(dock)} 기대 ${JSON.stringify(want)} `
+               + `실제 ${JSON.stringify(got)} 모니터 [${displays}]\n`;
+    if (fs.existsSync(file) && fs.statSync(file).size > PLACEMENT_LOG_MAX) {
+      fs.writeFileSync(file, fs.readFileSync(file, 'utf8').slice(-PLACEMENT_LOG_MAX / 2), 'utf8');
+    }
+    fs.appendFileSync(file, line, 'utf8');
+  } catch { /* 기록 실패는 무시한다 */ }
 }
 
 // ---------------------------------------------------------------- 트레이
@@ -895,6 +975,50 @@ function registerIpc() {
 
   // ── 패널 여닫기 / 폭 ──────────────────────────────────
 
+  ipcMain.handle('tabs:dragging', (e, value) => {
+    const pane = paneOf(e);
+    if (!pane) return;
+    pane.tabDragging = !!value;
+    if (pane.tabDragging) setInteractive(pane, true);   // 띠 밖으로 나가도 놓는 순간까지 받는다
+    else {
+      showDropTarget(null);
+      if (!pane.expanded) setInteractive(pane, pane.overStrip);
+    }
+  });
+
+  /*
+   * 커서가 다른 가장자리의 띠 위에 있으면 그쪽으로 옮긴다.
+   * 저장소에서 먼저 옮겨 두고(도중에 꺼져도 잃지 않게), 받는 창에는 메모를 넘겨준다.
+   * 받는 창이 자기 목록에 직접 넣어 저장해야, 그 창이 늦게 보낸 저장에 덮이지 않는다.
+   */
+  ipcMain.handle('tabs:moveToDock', (e, { tabId, point }) => {
+    const from = paneOf(e);
+    if (!from) return { moved: false };
+    // 놓은 지점은 포인터 이벤트가 알려준 화면 좌표를 쓴다. 없으면 지금 커서 위치.
+    const ok = point && Number.isFinite(point.x) && Number.isFinite(point.y);
+    const p = ok ? { x: Math.round(point.x), y: Math.round(point.y) } : screen.getCursorScreenPoint();
+    const target = dropTargetAt(p, from.dockId);
+    showDropTarget(null);
+    if (!target) return { moved: false };
+
+    // 놓은 높이를 기억한다 (자유 배치를 끈 경우엔 맨 아래로)
+    let top = null;
+    if (store.get().settings.freeTabLayout !== false) {
+      const b = target.win.getBounds();
+      const stripTop = b.y + 14;                 // #tabstrip 의 위쪽 여백
+      const stripH = Math.max(1, b.height - 28 - 60);
+      top = Math.max(0, Math.min(1, (p.y - stripTop - 30) / stripH));
+    }
+
+    const res = store.moveTab(from.dockId, tabId, target.dockId, top);
+    if (!res.ok) return { moved: false, reason: res.reason };
+
+    target.win.webContents.send('tabs:receive', { tab: res.tab });
+    slideTo(target.dockId, true);
+    const dock = store.getDock(target.dockId);
+    return { moved: true, label: dock ? dockLabel(dock) : '' };
+  });
+
   ipcMain.handle('panel:setInteractive', (e, value) => {
     const pane = paneOf(e);
     if (pane && !pane.expanded) setInteractive(pane, !!value);
@@ -1126,6 +1250,7 @@ if (!app.requestSingleInstanceLock()) {
     buildTray();
     registerIpc();
     startCursorWatch();
+    startPlacementWatch();
     startFileWatch();
 
     const failed = applyShortcuts();
@@ -1161,6 +1286,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('will-quit', () => {
     if (fileWatcher) { try { fileWatcher.close(); } catch { /* 이미 닫힘 */ } }
     clearInterval(watchTimer);
+    clearInterval(placementTimer);
     clearInterval(backupTimer);
     globalShortcut.unregisterAll();
   });

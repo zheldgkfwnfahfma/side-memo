@@ -8,6 +8,10 @@ contextBridge.exposeInMainWorld('sideMemo', {
 
   setPanel: (expanded, opts) => ipcRenderer.invoke('panel:set', expanded, opts),
   setInteractive: (value) => ipcRenderer.invoke('panel:setInteractive', value),
+  setTabDragging: (value) => ipcRenderer.invoke('tabs:dragging', value),
+  moveTabToDock: (tabId, point) => ipcRenderer.invoke('tabs:moveToDock', { tabId, point }),
+  onDropTarget: (cb) => ipcRenderer.on('tabs:dropTarget', (_e, v) => cb(v)),
+  onReceiveTab: (cb) => ipcRenderer.on('tabs:receive', (_e, v) => cb(v)),
   focusPanel: () => ipcRenderer.invoke('panel:focus'),
   useWidth: (width) => ipcRenderer.invoke('panel:useWidth', width),
   setShortcuts: (next) => ipcRenderer.invoke('shortcuts:set', next),

@@ -107,6 +107,33 @@ function tempDir() {
   check('되돌린 메모가 목록에 있다', s.get().docks[0].tabs.some((t) => t.id === back.tabId));
 }
 
+// ── 메모를 다른 가장자리로 옮기기 ─────────────────────
+{
+  const dir = tempDir();
+  const s = new Store(dir);
+  const a = s.get().docks[0];
+  const b = s.addDock('left', null);
+  const moving = a.tabs[0];
+  a.activeTabId = moving.id;
+  const before = a.tabs.length;
+
+  const r = s.moveTab(a.id, moving.id, b.id, 0.4);
+  check('다른 가장자리로 옮긴다', r.ok && b.tabs.some((t) => t.id === moving.id));
+  check('보낸 쪽에서는 빠진다', a.tabs.length === before - 1 && !a.tabs.some((t) => t.id === moving.id));
+  check('보낸 쪽은 다른 메모를 연다', a.activeTabId !== moving.id && a.tabs.some((t) => t.id === a.activeTabId));
+  check('받은 쪽은 옮겨 온 메모를 연다', b.activeTabId === moving.id);
+  check('놓은 높이를 기억한다', b.tabs.find((t) => t.id === moving.id).top === 0.4);
+  const disk = JSON.parse(fs.readFileSync(s.file, 'utf8'));
+  check('옮긴 결과가 바로 저장된다', disk.docks[1].tabs.some((t) => t.id === moving.id));
+
+  const only = b.tabs.find((t) => t.id !== moving.id);
+  s.moveTab(b.id, moving.id, a.id, null);
+  const last = s.moveTab(b.id, only.id, a.id, null);
+  check('마지막 한 장은 옮기지 않는다', last.ok === false && /마지막/.test(last.reason || ''), JSON.stringify(last));
+  check('같은 가장자리로는 옮기지 않는다', s.moveTab(a.id, a.tabs[0].id, a.id).ok === false);
+  check('없는 메모는 옮기지 않는다', s.moveTab(a.id, 'nope', b.id).ok === false);
+}
+
 for (const d of dirs) {
   try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* 임시 폴더 */ }
 }

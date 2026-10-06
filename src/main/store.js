@@ -233,6 +233,27 @@ class Store {
     return this.data.docks.find((d) => d.id === id) || null;
   }
 
+  /**
+   * 메모 하나를 다른 가장자리로 옮긴다. 마지막 한 장은 옮기지 않는다(빈 가장자리가 생기므로).
+   * @returns {{ ok: boolean, tab?: object, reason?: string }}
+   */
+  moveTab(fromId, tabId, toId, top = null) {
+    const from = this.getDock(fromId);
+    const to = this.getDock(toId);
+    if (!from || !to || from === to) return { ok: false };
+    if (from.tabs.length <= 1) return { ok: false, reason: '마지막 메모는 옮길 수 없습니다' };
+    const i = from.tabs.findIndex((t) => t.id === tabId);
+    if (i < 0) return { ok: false };
+
+    const [tab] = from.tabs.splice(i, 1);
+    if (from.activeTabId === tabId) from.activeTabId = from.tabs[Math.min(i, from.tabs.length - 1)].id;
+    tab.top = top;
+    to.tabs.push(tab);
+    to.activeTabId = tab.id;
+    this.save();
+    return { ok: true, tab };
+  }
+
   addDock(edge, displayId) {
     const dock = this.makeDock({ edge, displayId });
     this.data.docks.push(dock);

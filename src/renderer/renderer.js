@@ -228,6 +228,60 @@ function firstFreeSlot(y, h, occupied, stripH) {
   return Math.max(0, Math.min(stripH - h, top));
 }
 
+/*
+ * 정해진 순서대로 탭을 [0, room] 안에 겹치지 않게 늘어놓는다.
+ * 원하던 높이(want)를 최대한 지키고, 자리가 모자라면 앞뒤로 밀어 맞춘다.
+ *
+ * 예전에는 자리가 모자랄 때 탭마다 따로 띠 끝에 붙여서 서로 겹쳤고,
+ * 끌기가 끝나면 그 겹친 위치가 그대로 저장됐다. 탭이 많아 띠가 거의 찼을 때 잘 났다.
+ */
+function packTops(order, want, heights, room) {
+  const tops = want.slice();
+  const n = order.length;
+  if (!n) return tops;
+  const total = order.reduce((sum, i) => sum + heights[i], 0);
+  // 넉넉하면 원래 간격, 모자라면 간격부터 줄인다
+  const gap = n > 1 ? Math.max(0, Math.min(TAB_GAP, (room - total) / (n - 1))) : 0;
+
+  // ① 위에서 아래로: 앞 탭 밑으로만 내려간다
+  let floor = 0;
+  for (const i of order) { tops[i] = Math.max(want[i], floor); floor = tops[i] + heights[i] + gap; }
+  // ② 아래에서 위로: 띠 밖으로 나간 만큼 끌어올린다
+  let ceil = room;
+  for (let k = n - 1; k >= 0; k--) {
+    const i = order[k];
+    tops[i] = Math.min(tops[i], ceil - heights[i]);
+    ceil = tops[i] - gap;
+  }
+  // ③ 그래도 맨 위를 넘었으면(정말로 다 안 들어가면) 위에서부터 다시 쌓는다
+  floor = 0;
+  for (const i of order) { tops[i] = Math.max(tops[i], floor); floor = tops[i] + heights[i] + gap; }
+  return tops;
+}
+
+/** 높이 순서대로 정렬한 탭 번호. 같으면 원래 순서. */
+function orderByTop(tops) {
+  return tops.map((_, i) => i).sort((a, b) => (tops[a] - tops[b]) || (a - b));
+}
+
+/**
+ * ＋ 버튼 자리. 맨 아래 탭 밑이 비었으면 거기, 아니면 탭 사이 빈틈(아래쪽부터).
+ * 들어갈 곳이 없으면 null.
+ */
+function placeAdd(tops, heights, stripH, addH) {
+  const order = orderByTop(tops);
+  if (!order.length) return 0;
+  const last = order[order.length - 1];
+  const lowest = tops[last] + heights[last];
+  if (lowest + TAB_GAP + addH <= stripH) return lowest + TAB_GAP;
+
+  for (let k = order.length - 1; k >= 0; k--) {
+    const above = k > 0 ? tops[order[k - 1]] + heights[order[k - 1]] + TAB_GAP : 0;
+    if (tops[order[k]] - above >= addH + TAB_GAP) return above;
+  }
+  return null;
+}
+
 /** 지금 상태대로 모든 탭과 ＋ 버튼의 위치를 계산한다. */
 function computeLayout() {
   const els = [...tabsEl.children];
@@ -238,21 +292,13 @@ function computeLayout() {
   const occupied = [];
   const isFixed = els.map((el, i) => freeLayout() && state.dock.tabs[i].top != null);
 
-  // 1) 따로 옮겨둔 탭 먼저. 창이 줄어 겹치게 됐으면 아래로 밀어 떼어놓는다.
-  const fixed = [];
+  // 1) 따로 옮겨둔 탭은 기억해 둔 높이를 원한다. 겹침은 맨 끝에서 한꺼번에 푼다.
   els.forEach((el, i) => {
     if (!isFixed[i]) return;
-    fixed.push({ i, h: heights[i], top: state.dock.tabs[i].top * Math.max(0, stripH - heights[i]) });
+    const top = state.dock.tabs[i].top * Math.max(0, stripH - heights[i]);
+    tops[i] = top;
+    occupied.push({ top, bottom: top + heights[i] });
   });
-  fixed.sort((a, b) => a.top - b.top);
-
-  let guard = 0;
-  for (const f of fixed) {
-    const top = Math.max(0, Math.min(stripH - f.h, Math.max(f.top, guard)));
-    tops[f.i] = top;
-    occupied.push({ top, bottom: top + f.h });
-    guard = top + f.h + TAB_GAP;
-  }
 
   // 2) 나머지는 위에서부터 차곡차곡. 위에서 찜한 구간은 건너뛴다.
   let autoH = 0;
@@ -271,7 +317,19 @@ function computeLayout() {
     y = top + heights[i] + TAB_GAP;
   });
 
-  return { tops, addTop: firstFreeSlot(y, addH, occupied, stripH), heights, stripH };
+  // 3) 높이 순서를 지키며 겹치지 않게 맞추고, ＋ 버튼 자리를 찾는다.
+  //    ＋ 가 들어갈 곳이 없으면 그만큼 비워 두고 다시 맞춘다.
+  const order = orderByTop(tops);
+  let packed = packTops(order, tops, heights, stripH);
+  let addTop = placeAdd(packed, heights, stripH, addH);
+  if (addTop == null) {
+    packed = packTops(order, tops, heights, Math.max(0, stripH - addH - TAB_GAP));
+    const last = order[order.length - 1];
+    addTop = packed[last] + heights[last] + TAB_GAP;   // 넘치면 띠를 굴려서 본다
+  }
+  const bottom = packed.reduce((m, t, i) => Math.max(m, t + heights[i]), 0);
+  const contentH = Math.max(stripH, bottom, addTop + addH);
+  return { tops: packed, addTop, heights, stripH, contentH };
 }
 
 function applyTops(tops, addTop) {
@@ -279,10 +337,26 @@ function applyTops(tops, addTop) {
   $('#add-tab').style.top = Math.round(addTop) + 'px';
 }
 
+/*
+ * 탭이 많아 띠에 다 안 들어가면 탭을 조금 납작하게 만든다.
+ * (간격을 줄이는 것만으로는 모자랄 때. 그래도 안 되면 packTops 가 겹침만은 막는다)
+ */
+function updateCrowding() {
+  const strip = $('#tabstrip');
+  strip.classList.remove('crowded');
+  const heights = tabHeights();
+  const need = heights.reduce((sum, h) => sum + h, 0)
+             + Math.max(0, heights.length - 1) * 2 + $('#add-tab').offsetHeight + TAB_GAP;
+  if (need > stripHeight()) strip.classList.add('crowded');
+}
+
 function layoutTabs() {
   if (!tabsEl.children.length) return;
-  const { tops, addTop } = computeLayout();
+  updateCrowding();
+  const { tops, addTop, stripH, contentH } = computeLayout();
   applyTops(tops, addTop);
+  // 납작하게 해도 다 안 들어가면 겹치게 두지 않고, 띠를 휠로 굴려서 보게 한다
+  $('#tabstrip').classList.toggle('scrolling', contentH > stripH + 0.5);
 }
 
 window.addEventListener('resize', () => { if (state) layoutTabs(); });
@@ -306,12 +380,12 @@ function resetTabPositions() {
   toast('탭 위치를 초기화했습니다');
 }
 
-/** ＋ 버튼은 언제나 탭들 아래, 겹치지 않는 자리에 둔다. */
+/** 끄는 동안의 ＋ 버튼 자리. 들어갈 틈이 없으면(띠가 넘치면) 맨 아래 탭 밑에 둔다. */
 function addButtonTop(tops, heights, stripH) {
   const addH = $('#add-tab').offsetHeight;
-  const occupied = tops.map((t, i) => ({ top: t, bottom: t + heights[i] }));
-  const lowest = occupied.reduce((m, o) => Math.max(m, o.bottom), 0);
-  return firstFreeSlot(lowest + TAB_GAP, addH, occupied, stripH);
+  const at = placeAdd(tops, heights, stripH, addH);
+  if (at != null) return at;
+  return tops.reduce((m, t, i) => Math.max(m, t + heights[i]), 0) + TAB_GAP;
 }
 
 // ─────────────────────────────────────────── 탭 끌기 (미리보기 포함)
@@ -342,31 +416,44 @@ function pushPreview(dragIndex, dragTop, baseTops, heights, stripH) {
   const tops = baseTops.slice();
   tops[dragIndex] = dragTop;
 
-  const dragCenter = dragTop + heights[dragIndex] / 2;
+  // 끄는 방향의 앞쪽 모서리가 이웃의 가운데를 넘으면 자리를 바꾼다.
+  // (가운데끼리 비교하면 맨 위로 끌어도 높이가 비슷한 이웃을 못 넘는 경우가 있었다)
+  const movingUp = dragTop < baseTops[dragIndex];
+  const lead = movingUp ? dragTop : dragTop + heights[dragIndex];
   const above = [];
   const below = [];
   baseTops.forEach((top, i) => {
     if (i === dragIndex) return;
-    if (top + heights[i] / 2 < dragCenter) above.push(i);
+    if (top + heights[i] / 2 < lead) above.push(i);
     else below.push(i);
   });
 
-  above.sort((a, b) => baseTops[b] - baseTops[a]);
-  let limit = dragTop - TAB_GAP;
-  for (const i of above) {
-    const top = Math.max(0, Math.min(baseTops[i], limit - heights[i]));
-    tops[i] = top;
-    limit = top - TAB_GAP;
+  above.sort((a, b) => baseTops[a] - baseTops[b]);
+  below.sort((a, b) => baseTops[a] - baseTops[b]);
+
+  // 끌고 있는 탭은 커서를 따라가되, 위·아래 탭들이 들어갈 자리는 남겨 둔다.
+  // (예전에는 끝까지 밀린 이웃이 띠 끝에 붙으면서 서로 겹쳤다)
+  const span = (list) => list.reduce((sum, i) => sum + heights[i] + TAB_GAP, 0);
+  const h = heights[dragIndex];
+  const minTop = span(above);
+  const maxTop = stripH - h - span(below);
+  const top = minTop <= maxTop ? Math.max(minTop, Math.min(maxTop, dragTop)) : dragTop;
+  tops[dragIndex] = top;
+
+  // 위쪽 탭은 끌고 있는 탭에 닿지 않게 위로, 아래쪽 탭은 아래로 밀어낸다
+  let ceil = top - TAB_GAP;
+  for (const i of [...above].reverse()) {
+    tops[i] = Math.min(baseTops[i], ceil - heights[i]);
+    ceil = tops[i] - TAB_GAP;
+  }
+  let floor = top + h + TAB_GAP;
+  for (const i of below) {
+    tops[i] = Math.max(baseTops[i], floor);
+    floor = tops[i] + heights[i] + TAB_GAP;
   }
 
-  below.sort((a, b) => baseTops[a] - baseTops[b]);
-  limit = dragTop + heights[dragIndex] + TAB_GAP;
-  for (const i of below) {
-    const top = Math.min(stripH - heights[i], Math.max(baseTops[i], limit));
-    tops[i] = top;
-    limit = top + heights[i] + TAB_GAP;
-  }
-  return tops;
+  // 마지막으로 띠 안에 겹치지 않게 맞춘다. 자리가 넉넉하면 아무것도 안 바뀐다.
+  return packTops([...above, dragIndex, ...below], tops, heights, stripH);
 }
 
 /** 순서 바꾸기 미리보기. 끌고 있는 탭이 들어갈 자리를 비워두고 나머지를 쌓는다. */
@@ -436,13 +523,36 @@ function orderPreview(dragIndex, dragTop, heights, stripH) {
     if (!draggingTab) {
       if (Math.abs(e.clientY - ctx.startY) < THRESHOLD) return;
       draggingTab = true;
-      ctx.el.setPointerCapture(e.pointerId);
+      try { ctx.el.setPointerCapture(e.pointerId); } catch { /* 이미 놓인 포인터 */ }
       ctx.el.classList.add('dragging');
       tabsEl.classList.add('reordering');
       $('#drop-slot').hidden = false;
+      api.setTabDragging(true);
     }
 
     const { index, heights, stripH, baseTops } = ctx;
+
+    /*
+     * 띠에서 옆으로 벗어난 거리로 뜻을 가린다.
+     *   조금(8px 넘게)   : 놓을 때 다른 가장자리 위인지 물어본다. 아니면 평소처럼 정렬.
+     *   멀리(LEAVE_PX 넘게): '다른 가장자리로 옮기기'로 보고, 이 띠의 탭들은 원래 자리로 돌려놓는다.
+     * 위아래로 끌다가 옆으로 조금 흘러도 정렬이 취소되지 않게 하려는 것이다.
+     */
+    const strip = $('#tabstrip').getBoundingClientRect();
+    const away = Math.max(0, strip.left - e.clientX, e.clientX - strip.right);
+    ctx.outside = away > 8;
+    const leaving = away > LEAVE_PX;
+    if (leaving !== ctx.leaving) {
+      ctx.leaving = leaving;
+      ctx.el.classList.toggle('leaving', leaving);
+      $('#drop-slot').hidden = leaving;
+    }
+    if (leaving) {
+      ctx.preview = null;
+      const rest = baseTops.slice();
+      applyTops(rest, addButtonTop(rest, heights, stripH));
+      return;
+    }
     const h = heights[index];
     const wanted = Math.max(0, Math.min(stripH - h, ctx.startTop + (e.clientY - ctx.startY)));
 
@@ -451,7 +561,7 @@ function orderPreview(dragIndex, dragTop, heights, stripH) {
       const tops = pushPreview(index, top, baseTops, heights, stripH);
       ctx.preview = { tops };
       applyTops(tops, addButtonTop(tops, heights, stripH));
-      showDropSlot(top, h);
+      showDropSlot(tops[index], h);   // 이웃에게 자리를 남기느라 조정된 '실제로 놓일 곳'
     } else {
       const p = orderPreview(index, wanted, heights, stripH);
       ctx.preview = p;
@@ -460,18 +570,37 @@ function orderPreview(dragIndex, dragTop, heights, stripH) {
     }
   });
 
-  function finish(e) {
+  async function finish(e) {
     if (!ctx) return;
-    const { el, index, preview, heights, stripH, baseTops } = ctx;
+    const { el, index, preview, heights, stripH, baseTops, leaving, outside } = ctx;
     const wasDragging = draggingTab;
-    if (e && el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
-    el.classList.remove('dragging');
+    try {
+      if (e && el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    } catch { /* 이미 놓였다 */ }
+    el.classList.remove('dragging', 'leaving');
     tabsEl.classList.remove('reordering');
     $('#drop-slot').hidden = true;
     ctx = null;
 
-    if (!wasDragging || !preview) return;
+    if (!wasDragging) return;
     setTimeout(() => { draggingTab = false; }, 0);   // 뒤따라오는 click 을 흘려보낸다
+
+    if (outside) {
+      const tab = state.dock.tabs[index];
+      // 옮기기 전에 지금 쓰던 내용을 확정해야 옮겨 간 쪽에서도 최신 내용이 보인다
+      await flushSave();
+      const res = await api.moveTabToDock(tab.id, e ? { x: e.screenX, y: e.screenY } : null);
+      if (res && res.moved) {
+        api.setTabDragging(false);
+        dropTabLocally(tab.id);
+        toast(`'${tab.name}' 을(를) ${res.label} 로 옮겼습니다`);
+        return;
+      }
+      if (res && res.reason) toast(res.reason);
+      else if (leaving) toast('다른 가장자리의 탭 띠 위에 놓으면 그쪽으로 옮겨집니다');
+    }
+    api.setTabDragging(false);
+    if (!preview) { layoutTabs(); return; }   // 멀리 끌고 나갔다 그냥 놓았으면 원래 자리로
 
     if (freeLayout()) {
       // 보이는 그대로 저장한다. 밀려난 이웃도 그 자리에 머문다.
@@ -506,6 +635,45 @@ function orderPreview(dragIndex, dragTop, heights, stripH) {
     if (draggingTab) { e.stopPropagation(); e.preventDefault(); }
   }, true);
 })();
+
+/*
+ * ─── 다른 가장자리로 옮기기 ───
+ * 보내는 쪽: 저장소에서는 메인이 이미 뺐으므로, 내 목록에서도 빼고 저장한다.
+ * 받는 쪽  : 메인이 넘겨준 메모를 내 목록에 직접 넣는다. 이 창이 늦게 보낸
+ *           저장이 메인의 변경을 덮어쓰지 않도록, 목록의 주인인 이 창이 넣고 저장한다.
+ */
+const LEAVE_PX = 80;   // 띠에서 이만큼 벗어나면 '다른 가장자리로' 로 본다
+let dropTargetActive = false;
+
+function dropTabLocally(id) {
+  const idx = state.dock.tabs.findIndex((t) => t.id === id);
+  if (idx < 0) return;
+  state.dock.tabs.splice(idx, 1);
+  if (state.dock.activeTabId === id) {
+    state.dock.activeTabId = state.dock.tabs[Math.min(idx, state.dock.tabs.length - 1)].id;
+    loadActiveIntoEditor();
+  }
+  renderTabs();
+  api.saveTabs({ tabs: state.dock.tabs, activeTabId: state.dock.activeTabId });
+}
+
+api.onReceiveTab(({ tab }) => {
+  if (!state.dock.tabs.some((t) => t.id === tab.id)) state.dock.tabs.push(tab);
+  renderTabs();
+  if (tab.id === state.dock.activeTabId) {
+    loadActiveIntoEditor();
+    api.saveTabs({ tabs: state.dock.tabs, activeTabId: state.dock.activeTabId });
+  } else {
+    selectTab(tab.id);       // 쓰던 내용을 확정하고 옮겨 온 메모를 연다
+  }
+  toast(`'${tab.name}' 을(를) 옮겨 왔습니다`);
+});
+
+api.onDropTarget((on) => {
+  dropTargetActive = on;
+  $('#tabstrip').classList.toggle('drop-target', on);
+  updateTabVisibility(false);
+});
 
 // ─────────────────────────────────────────── 패널 열고 닫기
 
@@ -626,7 +794,7 @@ function hitsRect(el, x, y) {
  */
 function updateTabVisibility(cursorInStrip) {
   const mode = state.settings.tabVisibility || 'always';
-  const show = mode === 'always' || expanded
+  const show = mode === 'always' || expanded || dropTargetActive
             || (mode === 'hover' && (cursorInStrip || overStrip));
   app.classList.toggle('tabs-hidden', !show);
   return show;
@@ -637,7 +805,7 @@ window.addEventListener('mousemove', (e) => {
   const visible = updateTabVisibility(inStrip);
 
   // 접혀 있는 동안엔 '보이는 탭 띠' 위에서만 클릭을 받는다.
-  if (!expanded) {
+  if (!expanded && !draggingTab) {
     const catchClicks = inStrip && visible;
     if (catchClicks !== overTabs) {
       overTabs = catchClicks;
