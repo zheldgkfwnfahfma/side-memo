@@ -498,7 +498,7 @@ function pushWindows(pid, dx) {
         const r = el.getBoundingClientRect();
         const cx = strip.left + strip.width / 2;
         const far = strip.left > 200 ? strip.left - 300 : strip.right + 300;
-        const ev = (x, y, extra) => Object.assign({ bubbles: true, clientX: x, clientY: y, pointerId: 1 }, extra);
+        const ev = (x, y, extra) => Object.assign({ bubbles: true, clientX: x, clientY: y, pointerId: 1, buttons: 1 }, extra);
         el.dispatchEvent(new PointerEvent('pointerdown', ev(cx, r.top + 10)));
         el.dispatchEvent(new PointerEvent('pointermove', ev(cx, r.top + 30)));
         el.dispatchEvent(new PointerEvent('pointermove', ev(far, r.top + 30)));
@@ -703,7 +703,7 @@ function pushWindows(pid, dx) {
         const els = [...document.querySelectorAll('#tabs .tab')];
         const el = els[0];
         const before = parseFloat(el.style.top);
-        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1 });
+        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1, buttons: 1 });
         const r = el.getBoundingClientRect();
         el.dispatchEvent(new PointerEvent('pointerdown', opts(r.top + 5)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 40)));
@@ -743,7 +743,7 @@ function pushWindows(pid, dx) {
         const r = el.getBoundingClientRect();
         const from = parseFloat(el.style.top);
         const delta = (wanted + 7) - from;                    // 7px 어긋나게 놓는다
-        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1 });
+        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1, buttons: 1 });
         el.dispatchEvent(new PointerEvent('pointerdown', opts(r.top + 5)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 5 + 20)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 5 + delta)));
@@ -765,7 +765,7 @@ function pushWindows(pid, dx) {
         const r = el.getBoundingClientRect();
         const from = parseFloat(el.style.top);
         const delta = (vTop + 5) - from;            // 정확히 겹치는 자리로 끈다
-        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1 });
+        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1, buttons: 1 });
         el.dispatchEvent(new PointerEvent('pointerdown', opts(r.top + 5)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 25)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 5 + delta)));
@@ -877,7 +877,7 @@ function pushWindows(pid, dx) {
         const strip = document.querySelector('#tabstrip').getBoundingClientRect();
         const cx = strip.left + strip.width / 2;
         const r = el.getBoundingClientRect();
-        const ev = (y) => ({ bubbles: true, clientX: cx, clientY: y, pointerId: 1 });
+        const ev = (y) => ({ bubbles: true, clientX: cx, clientY: y, pointerId: 1, buttons: 1 });
         el.dispatchEvent(new PointerEvent('pointerdown', ev(r.top + 5)));
         el.dispatchEvent(new PointerEvent('pointermove', ev(r.top + 40)));
         el.dispatchEvent(new PointerEvent('pointermove', ev(strip.bottom - 5)));
@@ -904,7 +904,7 @@ function pushWindows(pid, dx) {
         const name = el.textContent;
         const strip = document.querySelector('#tabstrip').getBoundingClientRect();
         const r = el.getBoundingClientRect();
-        const ev = (x, y) => ({ bubbles: true, clientX: x, clientY: y, pointerId: 1, screenX: 0, screenY: 0 });
+        const ev = (x, y) => ({ bubbles: true, clientX: x, clientY: y, pointerId: 1, buttons: 1, screenX: 0, screenY: 0 });
         const cx = strip.left + strip.width / 2;
         el.dispatchEvent(new PointerEvent('pointerdown', ev(cx, r.top + 5)));
         el.dispatchEvent(new PointerEvent('pointermove', ev(cx, r.top + 40)));
@@ -916,6 +916,66 @@ function pushWindows(pid, dx) {
       })()`);
     const dr = JSON.parse(drift);
     check('옆으로 조금 흘러도 정렬은 된다', dr.top != null && dr.top > 0, drift);
+    // ── 창 밖에서 떼서 '뗌'을 놓친 경우 ───────────────────
+    // (탭이 반투명한 채 마우스를 계속 따라다니던 증상. 경계에 붙은 가장자리에서 옆 모니터로 끌고 나가 뗐을 때)
+    const missedRelease = await evalInPage(ws, `
+      (async () => {
+        for (const t of state.dock.tabs) t.top = null;
+        renderTabs();
+        await new Promise(r => setTimeout(r, 150));
+        const countBefore = state.dock.tabs.length;
+        const el = [...document.querySelectorAll('#tabs .tab')][1];
+        const id = el.dataset.id;
+        const strip = document.querySelector('#tabstrip').getBoundingClientRect();
+        const cx = strip.left + strip.width / 2;
+        const r = el.getBoundingClientRect();
+        const ev = (x, y, buttons) => ({ bubbles: true, clientX: x, clientY: y, pointerId: 1, buttons });
+        el.dispatchEvent(new PointerEvent('pointerdown', ev(cx, r.top + 5, 1)));
+        el.dispatchEvent(new PointerEvent('pointermove', ev(cx, r.top + 60, 1)));
+        el.dispatchEvent(new PointerEvent('pointermove', ev(strip.left - 400, r.top + 60, 1)));
+        const leavingShown = !!document.querySelector('#tabs .tab.leaving');
+        // 창 밖에서 뗐다고 치고 pointerup 은 보내지 않는다. 버튼을 뗀 채로 커서가 띠 위로 돌아온다.
+        (document.elementFromPoint(cx, r.top + 300) || document).dispatchEvent(new PointerEvent('pointermove', ev(cx, r.top + 300, 0)));
+        await new Promise(res => setTimeout(res, 300));
+        const topOf = () => parseFloat(document.querySelector('#tabs .tab[data-id="' + id + '"]').style.top);
+        const top1 = topOf();
+        (document.elementFromPoint(cx, r.top + 500) || document).dispatchEvent(new PointerEvent('pointermove', ev(cx, r.top + 500, 0)));
+        await new Promise(res => setTimeout(res, 200));
+        const top2 = topOf();
+        return JSON.stringify({
+          leavingShown, top1, top2,
+          marks: document.querySelectorAll('#tabs .tab.dragging, #tabs .tab.leaving').length,
+          dragging: draggingTab, pressed: typeof tabPressed === 'undefined' ? false : tabPressed,
+          countBefore, countAfter: state.dock.tabs.length,
+        });
+      })()`);
+    const mr = JSON.parse(missedRelease);
+    check('뗌을 놓쳐도 끌기가 끝난다', mr.leavingShown && mr.marks === 0 && !mr.dragging && !mr.pressed, missedRelease);
+    check('뗀 뒤에는 탭이 마우스를 따라다니지 않는다', mr.top1 === mr.top2, missedRelease);
+    check('뗀 곳을 모르면 다른 가장자리로 보내지 않는다', mr.countAfter === mr.countBefore, missedRelease);
+
+    // 탭을 누르고 있는 동안 '마우스 올림'이 다른 탭을 고르며 다시 그리지 않아야 한다
+    const pressHover = await evalInPage(ws, `
+      (async () => {
+        draggingTab = false;   // 앞 검사의 상태가 섞이지 않게
+        const els = [...document.querySelectorAll('#tabs .tab')];
+        selectTab(els[0].dataset.id);
+        await new Promise(r => setTimeout(r, 100));
+        const pressed = [...document.querySelectorAll('#tabs .tab')][2];
+        const before = state.dock.activeTabId;
+        const r = pressed.getBoundingClientRect();
+        const x = r.left + r.width / 2, y = r.top + r.height / 2;
+        pressed.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: x, clientY: y, pointerId: 1, buttons: 1 }));
+        window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: y + 2, buttons: 1 }));
+        const sameNode = document.contains(pressed);
+        const during = state.dock.activeTabId;
+        pressed.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x, clientY: y + 2, pointerId: 1 }));
+        await new Promise(res => setTimeout(res, 100));
+        return JSON.stringify({ unchanged: during === before, sameNode, pressedAfter: typeof tabPressed === 'undefined' ? false : tabPressed });
+      })()`);
+    const ph = JSON.parse(pressHover);
+    check('누르고 있는 동안엔 탭을 다시 그리지 않는다', ph.unchanged && ph.sameNode && !ph.pressedAfter, pressHover);
+
     await evalInPage(ws, 'for (const t of state.dock.tabs) t.top = null; renderTabs(); flushSave(); true');
     await sleep(300);
 
@@ -928,7 +988,7 @@ function pushWindows(pid, dx) {
         const el = els[2];
         const beforeTops = els.map(x => parseFloat(x.style.top));
         const r = el.getBoundingClientRect();
-        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1 });
+        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1, buttons: 1 });
         el.dispatchEvent(new PointerEvent('pointerdown', opts(r.top + 5)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top - 20)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top - 200)));
@@ -961,7 +1021,7 @@ function pushWindows(pid, dx) {
         const els = [...document.querySelectorAll('#tabs .tab')];
         const el = els[0];
         const r = el.getBoundingClientRect();
-        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1 });
+        const opts = (y) => ({ bubbles: true, clientX: (r => r.left + r.width / 2)(document.querySelector('#tabstrip').getBoundingClientRect()), clientY: y, pointerId: 1, buttons: 1 });
         el.dispatchEvent(new PointerEvent('pointerdown', opts(r.top + 5)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 30)));
         el.dispatchEvent(new PointerEvent('pointermove', opts(r.top + 200)));

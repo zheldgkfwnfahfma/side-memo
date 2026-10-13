@@ -27,6 +27,7 @@ let pinned = false;
 let overTabs = false;          // 접힌 상태에서 커서가 탭 띠 위에 있는지
 let overStrip = false;         // 메인이 알려주는 '가장자리에 커서가 닿음'
 let draggingTab = false;       // 탭을 끌어 옮기는 중
+let tabPressed = false;        // 탭을 누르고 있는 중 (끌기 시작 전 포함)
 let tabClickTimer = null;      // 더블클릭이 오면 취소할 '접기' 예약
 let primaryDisplayId = null;
 let displayCount = 1;
@@ -501,11 +502,16 @@ function orderPreview(dragIndex, dragTop, heights, stripH) {
     slot.style.height = Math.round(height) + 'px';
   }
 
+  /** 끄는 탭의 지금 요소. 중간에 탭이 다시 그려졌어도 같은 탭을 찾는다. */
+  const liveEl = () => (ctx && tabsEl.querySelector(`.tab[data-id="${ctx.id}"]`)) || (ctx && ctx.el);
+
   tabsEl.addEventListener('pointerdown', (e) => {
     const el = e.target.closest('.tab');
     if (!el) return;
     const els = [...tabsEl.children];
+    tabPressed = true;
     ctx = {
+      id: el.dataset.id,
       el,
       index: els.indexOf(el),
       startY: e.clientY,
@@ -517,12 +523,21 @@ function orderPreview(dragIndex, dragTop, heights, stripH) {
     ctx.startTop = ctx.baseTops[ctx.index];
   });
 
-  tabsEl.addEventListener('pointermove', (e) => {
+  /*
+   * 끄는 동안의 움직임과 놓기는 탭 띠가 아니라 창 전체에서 받는다.
+   * 띠 밖(메모지 쪽)이나 창 밖에서 떼면, 띠에만 귀를 대고 있던 예전 코드는 그걸 못 들어서
+   * 끌기가 끝나지 않았고, 커서가 돌아올 때마다 탭이 따라다녔다.
+   */
+  window.addEventListener('pointermove', (e) => {
     if (!ctx) return;
+
+    // 버튼이 이미 떨어져 있다 = 어딘가에서 뗀 걸 놓쳤다. 따라다니지 말고 여기서 끝낸다.
+    if (e.buttons === 0) { finish(e, { missed: true }); return; }
 
     if (!draggingTab) {
       if (Math.abs(e.clientY - ctx.startY) < THRESHOLD) return;
       draggingTab = true;
+      ctx.el = liveEl();
       try { ctx.el.setPointerCapture(e.pointerId); } catch { /* 이미 놓인 포인터 */ }
       ctx.el.classList.add('dragging');
       tabsEl.classList.add('reordering');
@@ -570,14 +585,20 @@ function orderPreview(dragIndex, dragTop, heights, stripH) {
     }
   });
 
-  async function finish(e) {
+  async function finish(e, { missed = false } = {}) {
     if (!ctx) return;
-    const { el, index, preview, heights, stripH, baseTops, leaving, outside } = ctx;
+    const el = liveEl();
+    const { index, preview, heights, stripH, baseTops, leaving } = ctx;
+    // 뗀 자리를 모르면 다른 가장자리로 옮기지 않는다 (엉뚱한 곳으로 보내지 않게)
+    const outside = ctx.outside && !missed;
     const wasDragging = draggingTab;
+    tabPressed = false;
     try {
       if (e && el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
     } catch { /* 이미 놓였다 */ }
-    el.classList.remove('dragging', 'leaving');
+    // 중간에 탭이 다시 그려졌을 수도 있으니 남은 표시는 전부 지운다
+    for (const x of tabsEl.querySelectorAll('.dragging, .leaving')) x.classList.remove('dragging', 'leaving');
+    if (el) el.classList.remove('dragging', 'leaving');
     tabsEl.classList.remove('reordering');
     $('#drop-slot').hidden = true;
     ctx = null;
@@ -628,8 +649,12 @@ function orderPreview(dragIndex, dragTop, heights, stripH) {
     renderTabs();
   }
 
-  tabsEl.addEventListener('pointerup', finish);
-  tabsEl.addEventListener('pointercancel', finish);
+  window.addEventListener('pointerup', (e) => finish(e));
+  window.addEventListener('pointercancel', (e) => finish(e));
+  // 붙잡기가 풀렸는데 버튼도 떨어져 있으면 끝낸다
+  tabsEl.addEventListener('lostpointercapture', (e) => { if (ctx && e.buttons === 0) finish(e); });
+  // 창이 포커스를 잃는 사이에 뗐을 수도 있다
+  window.addEventListener('blur', () => { if (ctx) finish(null, { missed: true }); });
 
   tabsEl.addEventListener('click', (e) => {
     if (draggingTab) { e.stopPropagation(); e.preventDefault(); }
@@ -813,7 +838,9 @@ window.addEventListener('mousemove', (e) => {
     }
   }
 
-  if (!state.settings.peekOnHover || draggingTab || !visible) return;
+  // 탭을 누르고 있는 동안엔 다른 탭을 고르지 않는다. 고르면 탭을 다시 그리면서
+  // 잡고 있던 탭이 사라져, 마우스 붙잡기가 풀리고 놓은 걸 못 받게 된다.
+  if (!state.settings.peekOnHover || draggingTab || tabPressed || !visible) return;
 
   // 메모지는 '탭 제목' 위에 커서가 있을 때만 나온다. 띠의 빈 곳이나 ＋ 위에서는 나오지 않는다.
   const hovered = [...tabsEl.children].find((el) => hitsRect(el, e.clientX, e.clientY));
