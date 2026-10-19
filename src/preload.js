@@ -9,6 +9,14 @@ contextBridge.exposeInMainWorld('sideMemo', {
   setPanel: (expanded, opts) => ipcRenderer.invoke('panel:set', expanded, opts),
   setInteractive: (value) => ipcRenderer.invoke('panel:setInteractive', value),
   setTabDragging: (value) => ipcRenderer.invoke('tabs:dragging', value),
+  // 테스트 전용 (임시 프로필로 띄웠을 때만 메인에 받는 쪽이 있다)
+  test: {
+    fakeDisplays: (fake, silent) => ipcRenderer.invoke('test:fakeDisplays', fake, silent),
+    paneInfo: () => ipcRenderer.invoke('test:paneInfo'),
+    toggleDock: (id) => ipcRenderer.invoke('test:toggleDock', id),
+    collapse: (id) => ipcRenderer.invoke('test:collapse', id),
+    setHiddenAll: (v) => ipcRenderer.invoke('test:setHiddenAll', v),
+  },
   moveTabToDock: (tabId, point) => ipcRenderer.invoke('tabs:moveToDock', { tabId, point }),
   onDropTarget: (cb) => ipcRenderer.on('tabs:dropTarget', (_e, v) => cb(v)),
   onReceiveTab: (cb) => ipcRenderer.on('tabs:receive', (_e, v) => cb(v)),

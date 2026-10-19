@@ -26,8 +26,9 @@ function hintOf(display) {
  *        'bounds'   — 같은 자리·같은 크기 (가장 확실)
  *        'id'       — id 가 그대로
  *        'position' — 자리는 같고 해상도만 바뀜
- *        'label'    — 이름이 하나뿐이라 이름으로
- *        'fallback' — 못 찾아서 일단 주 모니터
+ *        'label'    — 이름이 하나뿐이라 이름으로 (꺼진 모니터가 없을 때만)
+ *        'missing'  — 고른 모니터가 꺼져 있다(목록에 없다). 주 모니터로 옮기지 말고 기다린다
+ *        'fallback' — 단서도 없는 옛 데이터라 어디인지 몰라서 일단 주 모니터
  */
 function pickDisplay(displays, primaryId, dock) {
   const primary = displays.find((d) => d.id === primaryId) || displays[0];
@@ -49,12 +50,25 @@ function pickDisplay(displays, primaryId, dock) {
     const samePos = displays.find(samePlace);
     if (samePos) return { display: samePos, how: 'position' };
 
-    const byLabel = h.label ? displays.filter((d) => d.label === h.label) : [];
+    // 이름으로 찾는 건 모니터가 하나도 꺼지지 않았을 때만 한다.
+    // 고를 때보다 모니터 수가 줄었다면 '그 모니터가 꺼졌다'로 보는 게 맞다.
+    // (같은 모델 두 대면 하나가 꺼졌을 때 남은 한 대를 '이름으로 찾았다'고 착각한다)
+    const nothingOff = h.count != null && displays.length >= h.count;
+    const byLabel = h.label && nothingOff ? displays.filter((d) => d.label === h.label) : [];
     if (byLabel.length === 1) return { display: byLabel[0], how: 'label' };
+
+    // 고른 모니터가 꺼져 있다. 주 모니터로 옮겨 붙이지 않고 돌아올 때까지 기다린다.
+    // (예전에는 여기서 주 모니터를 돌려줘서, 모니터를 끌 때마다 메모가 주 모니터로 넘어왔다)
+    return { display: primary, how: 'missing' };
   }
 
-  // 못 찾았다. 켜지는 중이라 아직 안 잡힌 모니터일 수 있으니 저장값은 건드리지 않는다.
+  // 단서가 없는 옛 데이터인데 id 도 없다. 어디였는지 알 길이 없어 일단 주 모니터에 둔다.
   return { display: primary, how: 'fallback' };
+}
+
+/** 고른 모니터가 꺼져 있어 숨어서 기다려야 하는지. */
+function isWaiting(result) {
+  return result.how === 'missing';
 }
 
 /*
@@ -78,7 +92,9 @@ function refreshDocks(docks, displays, primaryId) {
   for (const dock of docks) {
     const { display, how } = pickDisplay(displays, primaryId, dock);
     if (!TRUSTED.has(how)) continue;
+    // 고를 때 몇 대였는지(count)는 고를 때만 정한다. 모니터가 꺼졌다 켜질 때마다 바뀌면 안 된다.
     const hint = hintOf(display);
+    if (dock.displayHint && dock.displayHint.count != null) hint.count = dock.displayHint.count;
     if (dock.displayId !== display.id || JSON.stringify(dock.displayHint) !== JSON.stringify(hint)) {
       dock.displayId = display.id;
       dock.displayHint = hint;
@@ -88,4 +104,4 @@ function refreshDocks(docks, displays, primaryId) {
   return changed;
 }
 
-module.exports = { pickDisplay, hintOf, refreshDocks };
+module.exports = { pickDisplay, hintOf, refreshDocks, isWaiting };

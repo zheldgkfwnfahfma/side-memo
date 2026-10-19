@@ -1443,6 +1443,106 @@ function pushWindows(pid, dx) {
       exec('bold'); /<(b|strong)>/.test(editor.innerHTML)`);
     check('굵게 서식 적용', bold);
 
+    // ── 모니터를 끄고 켜기 ─────────────────────────────
+    // 실제로 겪은 상황: 오른쪽 모니터에 둔 메모가, 모니터를 끄면 주 모니터로 넘어와 붙어 있었다.
+    // 모니터를 진짜로 끌 수는 없으니 메인의 모니터 목록을 가짜로 바꿔 끼운다 (같은 모델 두 대).
+    const mon = (id, x) => ({
+      id, label: 'LG FHD', scaleFactor: 1, size: { width: 1920, height: 1080 },
+      bounds: { x, y: 0, width: 1920, height: 1080 }, workArea: { x, y: 0, width: 1920, height: 1032 },
+    });
+    const P = mon(1001, 0);
+    const S = mon(2002, 1920);
+    const call = (expr) => evalInPage(ws, `(async () => JSON.stringify(await (${expr})))()`).then(JSON.parse);
+    const info = () => call('window.sideMemo.test.paneInfo()');
+    const setDisplays = (list, silent) => call(`window.sideMemo.test.fakeDisplays(${JSON.stringify(
+      list ? { primaryId: 1001, list } : null)}, ${!!silent})`);
+
+    // 앞의 테스트가 켜 둔 '잠시 숨기기'가 섞이지 않게 끄고 시작한다
+    await call('window.sideMemo.test.setHiddenAll(false)');
+    await setDisplays([P, S]);
+    await sleep(400);
+    // 주 모니터에 하나(원래 것) + 왼쪽, 오른쪽 모니터에 오른쪽·왼쪽 가장자리를 만든다
+    const added = [];
+    for (let i = 0; i < 3; i++) added.push((await call('window.sideMemo.addDock()')).id);
+    await sleep(1200);
+    const onS = (p) => p.bounds.x >= 1920;
+    let panes = await info();
+    const sDocks = panes.filter((p) => added.includes(p.id) && onS(p)).map((p) => p.id);
+    const pDocks = panes.filter((p) => !sDocks.includes(p.id)).map((p) => p.id);
+    check('오른쪽 모니터에 가장자리 두 개를 둔다', sDocks.length === 2 && pDocks.length === 2,
+      JSON.stringify(panes.map((p) => ({ x: p.bounds.x, label: p.label }))));
+
+    // ① 오른쪽 모니터를 끈다
+    await setDisplays([P]);
+    await sleep(500);
+    panes = await info();
+    const sOff = panes.filter((p) => sDocks.includes(p.id));
+    const pOff = panes.filter((p) => pDocks.includes(p.id));
+    check('모니터를 끄면 그 메모들은 숨는다', sOff.every((p) => !p.visible && p.waiting), JSON.stringify(sOff));
+    check('주 모니터로 옮겨 붙지 않는다', sOff.every((p) => !p.visible), JSON.stringify(sOff.map((p) => p.bounds)));
+    check('주 모니터의 메모는 그대로 보인다', pOff.every((p) => p.visible && p.bounds.x < 1920), JSON.stringify(pOff));
+    check('꺼진 모니터라고 표시한다', sOff.every((p) => /꺼진 모니터/.test(p.label)), JSON.stringify(sOff.map((p) => p.label)));
+
+    await sleep(600);
+    const diskOff = JSON.parse(fs.readFileSync(path.join(PROFILE, 'data.json'), 'utf8'));
+    const keptChoice = diskOff.docks.filter((d) => sDocks.includes(d.id))
+      .every((d) => d.displayId === 2002 && d.displayHint && d.displayHint.x === 1920);
+    check('꺼져 있는 동안 고른 모니터를 잊지 않는다', keptChoice,
+      JSON.stringify(diskOff.docks.map((d) => [d.displayId, d.displayHint && d.displayHint.x])));
+
+    // ② 꺼져 있는 동안 트레이·단축키로 부르면 그때만 주 모니터에 꺼내 보인다
+    await call(`window.sideMemo.test.toggleDock(${JSON.stringify(sDocks[0])})`);
+    await sleep(400);
+    let peeked = (await info()).find((p) => p.id === sDocks[0]);
+    check('직접 부르면 주 모니터에 잠깐 꺼내 보인다', peeked.visible && peeked.peek && peeked.bounds.x < 1920, JSON.stringify(peeked));
+    await call(`window.sideMemo.test.collapse(${JSON.stringify(sDocks[0])})`);
+    await sleep(400);
+    peeked = (await info()).find((p) => p.id === sDocks[0]);
+    check('닫으면 다시 숨는다', !peeked.visible && !peeked.peek && peeked.waiting, JSON.stringify(peeked));
+
+    // ③ 잠시 숨기기를 켰다 꺼도 꺼진 모니터의 메모가 주 모니터에 나타나지 않는다
+    await call('window.sideMemo.test.setHiddenAll(true)');
+    await sleep(200);
+    await call('window.sideMemo.test.setHiddenAll(false)');
+    await sleep(400);
+    panes = await info();
+    check('잠시 숨기기를 풀어도 꺼진 모니터의 메모는 숨어 있다',
+      panes.filter((p) => sDocks.includes(p.id)).every((p) => !p.visible)
+      && panes.filter((p) => pDocks.includes(p.id)).every((p) => p.visible), JSON.stringify(panes.map((p) => p.visible)));
+
+    // ④ 다시 켠다 — 윈도우가 id 를 새로 매긴 경우
+    const S2 = mon(3003, 1920);
+    await setDisplays([P, S2]);
+    await sleep(500);
+    panes = await info();
+    const sBack = panes.filter((p) => sDocks.includes(p.id));
+    check('다시 켜면 원래 모니터에 다시 나타난다', sBack.every((p) => p.visible && !p.waiting && onS(p)), JSON.stringify(sBack));
+    const rightBack = sBack.find((p) => /오른쪽/.test(p.label));
+    check('원래 가장자리(오른쪽 끝)에 붙는다',
+      !!rightBack && rightBack.bounds.x + rightBack.bounds.width === 3840, JSON.stringify(rightBack && rightBack.bounds));
+    await sleep(600);
+    const diskBack = JSON.parse(fs.readFileSync(path.join(PROFILE, 'data.json'), 'utf8'));
+    check('새로 매겨진 id 로 고쳐 적는다',
+      diskBack.docks.filter((d) => sDocks.includes(d.id)).every((d) => d.displayId === 3003),
+      JSON.stringify(diskBack.docks.map((d) => d.displayId)));
+
+    // ⑤ 모니터 알림을 놓친 경우 — 알림 없이 목록만 바뀌어도 1.5초 감시가 따라잡는다
+    await setDisplays([P], true);
+    await sleep(2200);
+    panes = await info();
+    check('알림을 놓쳐도 꺼짐을 따라잡는다', panes.filter((p) => sDocks.includes(p.id)).every((p) => !p.visible && p.waiting),
+      JSON.stringify(panes.map((p) => [p.visible, p.waiting])));
+    await setDisplays([P, S2], true);
+    await sleep(2200);
+    panes = await info();
+    check('알림을 놓쳐도 켜짐을 따라잡는다', panes.filter((p) => sDocks.includes(p.id)).every((p) => p.visible && onS(p)),
+      JSON.stringify(panes.map((p) => [p.visible, p.bounds.x])));
+
+    // 정리: 추가한 가장자리를 지우고 진짜 모니터 목록으로 되돌린다
+    for (const id of added) await call(`window.sideMemo.removeDock(${JSON.stringify(id)})`);
+    await setDisplays(null);
+    await sleep(800);
+
     // ── 렌더러 오류 ───────────────────────────────────
     const errors = logs.join('').match(/\[renderer\].*(Uncaught|Error)/g);
     check('렌더러 오류 없음', !errors, errors ? errors.join(' / ') : '');

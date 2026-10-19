@@ -6,7 +6,7 @@
  * 실제로 겪은 경우: 저장된 id 904708227 → 재부팅 뒤 모니터는 1546791665 / 3987148736,
  * 두 대 모두 이름이 'LG FHD' 라 이름으로도 못 가렸다.
  */
-const { pickDisplay, hintOf, refreshDocks } = require('../src/main/displays');
+const { pickDisplay, hintOf, refreshDocks, isWaiting } = require('../src/main/displays');
 
 const results = [];
 const check = (name, ok, detail = '') => {
@@ -60,7 +60,7 @@ const after = [mon(1546791665, 0), mon(3987148736, 1920)];
 
 {
   // 배치를 바꿨지만 이름이 유일하면 이름으로
-  const d2 = { displayId: 5, displayHint: hintOf(mon(5, 1920, 'DELL U2720Q')) };
+  const d2 = { displayId: 5, displayHint: { ...hintOf(mon(5, 1920, 'DELL U2720Q')), count: 2 } };
   const moved = [mon(1, 0, 'LG FHD'), mon(9, -2560, 'DELL U2720Q', 2560, 1440)];
   const r = pickDisplay(moved, 1, d2);
   check('자리가 바뀌어도 이름이 유일하면 이름으로 찾는다', r.display.id === 9 && r.how === 'label', r.how);
@@ -102,11 +102,62 @@ const after = [mon(1546791665, 0), mon(3987148736, 1920)];
 
 {
   // 이름·자리만으로 찾은 건 저장하지 않는다
-  const d2 = { displayId: 5, displayHint: hintOf(mon(5, 1920, 'DELL U2720Q')) };
+  const d2 = { displayId: 5, displayHint: { ...hintOf(mon(5, 1920, 'DELL U2720Q')), count: 2 } };
   const snap = JSON.stringify(d2);
   const moved = [mon(1, 0, 'LG FHD'), mon(9, -2560, 'DELL U2720Q', 2560, 1440)];
   refreshDocks([d2], moved, 1);
   check('이름으로 찾은 건 임시로만 쓰고 저장하지 않는다', JSON.stringify(d2) === snap);
+}
+
+// ── 모니터를 끄고 켜는 경우 (오른쪽 모니터에 둔 메모) ──
+{
+  const picked = { displayId: 3987148736, displayHint: { ...hintOf(after[1]), count: 2 } };
+  const snap = JSON.stringify(picked);
+
+  // 오른쪽 모니터를 껐다: 윈도우 목록에서 사라지고 주 모니터 한 대만 남는다
+  const offList = [mon(1546791665, 0)];
+  const off = pickDisplay(offList, 1546791665, picked);
+  check('모니터가 꺼지면 주 모니터로 옮기지 않고 기다린다', isWaiting(off), off.how);
+  check('같은 모델이 남아 있어도 이름으로 착각하지 않는다', off.how !== 'label', off.how);
+  refreshDocks([picked], offList, 1546791665);
+  check('꺼져 있는 동안 고른 모니터 정보를 덮어쓰지 않는다', JSON.stringify(picked) === snap, JSON.stringify(picked));
+
+  // 다시 켰다: 같은 id 로 돌아온 경우
+  const back = pickDisplay(after, 1546791665, picked);
+  check('다시 켜면 원래 모니터로 돌아간다', back.display.id === 3987148736 && !isWaiting(back), back.how);
+
+  // 다시 켰는데 id 가 새로 매겨진 경우
+  const renumbered = [mon(1546791665, 0), mon(777, 1920)];
+  const back2 = pickDisplay(renumbered, 1546791665, picked);
+  check('켜면서 id 가 바뀌어도 원래 모니터로 돌아간다', back2.display.id === 777 && back2.how === 'bounds', back2.how);
+  refreshDocks([picked], renumbered, 1546791665);
+  check('바뀐 id 로 고쳐 적되 고를 때의 대수는 지킨다',
+    picked.displayId === 777 && picked.displayHint.count === 2, JSON.stringify(picked));
+
+  // 켜지는 도중 해상도가 잠깐 다르게 잡힌 경우 (자리는 같다)
+  const settling = [mon(1546791665, 0), mon(888, 1920, 'LG FHD', 1280, 720)];
+  const mid = pickDisplay(settling, 1546791665, picked);
+  check('켜지는 도중 해상도가 달라도 자리로 찾는다', mid.display.id === 888 && mid.how === 'position', mid.how);
+}
+
+{
+  // 오른쪽 모니터가 꺼진 동안 다른 모니터가 그 자리(x=1920)에 오지 않는 한 기다린다.
+  // 주 모니터만 남은 상태에서 '왼쪽 가장자리' 메모도 마찬가지
+  const leftDock = { displayId: 3987148736, displayHint: { ...hintOf(after[1]), count: 2 } };
+  const r = pickDisplay([mon(1546791665, 0)], 1546791665, leftDock);
+  check('같은 모니터의 다른 가장자리 메모도 기다린다', isWaiting(r), r.how);
+}
+
+{
+  // 단서가 없는 아주 옛 데이터는 어디였는지 몰라 예전처럼 주 모니터에 둔다
+  const r = pickDisplay([mon(1546791665, 0)], 1546791665, { displayId: 42 });
+  check('단서가 없는 옛 데이터는 숨기지 않고 주 모니터에 둔다', r.how === 'fallback' && !isWaiting(r), r.how);
+}
+
+{
+  // 주 모니터를 따르는 가장자리는 기다리지 않는다
+  const r = pickDisplay([mon(1546791665, 0)], 1546791665, { displayId: null });
+  check('주 모니터를 따르는 가장자리는 숨지 않는다', !isWaiting(r), r.how);
 }
 
 {

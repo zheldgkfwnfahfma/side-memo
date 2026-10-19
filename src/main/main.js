@@ -7,7 +7,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 const { Store } = require('./store');
-const { pickDisplay, hintOf, refreshDocks } = require('./displays');
+const { pickDisplay, hintOf, refreshDocks, isWaiting } = require('./displays');
 const { createShare, htmlToText, safeFileName, uniqueStoredName } = require('./share');
 
 const TAB_W = 34;              // 화면 가장자리에 항상 남아 있는 탭 스트립 폭
@@ -115,9 +115,17 @@ protocol.registerSchemesAsPrivileged([
 
 // ---------------------------------------------------------------- 모니터 / 창 배치
 
+/*
+ * 모니터 목록. 테스트(임시 프로필)에서는 모니터를 끄고 켜는 상황을 흉내 낼 수 있도록
+ * 가짜 목록으로 바꿔 끼울 수 있다. 실제 실행에서는 늘 진짜 목록이다.
+ */
+let fakeDisplays = null;
+function allDisplays() { return fakeDisplays ? fakeDisplays.list : screen.getAllDisplays(); }
+function primaryDisplayId() { return fakeDisplays ? fakeDisplays.primaryId : screen.getPrimaryDisplay().id; }
+
 /* 모니터 id 는 재부팅하면 바뀔 수 있다. 찾는 규칙은 displays.js 에 있다. */
 function resolveDisplay(dock) {
-  return pickDisplay(screen.getAllDisplays(), screen.getPrimaryDisplay().id, dock);
+  return pickDisplay(allDisplays(), primaryDisplayId(), dock);
 }
 
 function displayFor(dock) {
@@ -126,22 +134,27 @@ function displayFor(dock) {
 
 /** 저장된 모니터 정보를 지금 화면에 맞춰 고쳐 적는다. 규칙은 displays.js 의 refreshDocks. */
 function refreshDockDisplays() {
-  const changed = refreshDocks(store.get().docks, screen.getAllDisplays(), screen.getPrimaryDisplay().id);
+  const changed = refreshDocks(store.get().docks, allDisplays(), primaryDisplayId());
   if (changed) store.save();
   return changed;
 }
 
-/** 자리가 겹치는지는 '실제로 붙어 있는 모니터' 기준으로 본다. null 은 주 모니터다. */
+/**
+ * 자리가 겹치는지는 '실제로 붙어 있는 모니터' 기준으로 본다. null 은 주 모니터다.
+ * 모니터가 꺼져 기다리는 가장자리는 그 모니터 자리를 지키고 있는 것으로 본다.
+ */
 function isSpotTaken(displayId, edge, exceptId = null) {
-  const target = displayId == null ? screen.getPrimaryDisplay().id : displayId;
-  return store.get().docks.some((d) => (
-    d.id !== exceptId && d.edge === edge && displayFor(d).id === target
-  ));
+  const target = displayId == null ? primaryDisplayId() : displayId;
+  const where = (d) => {
+    const r = resolveDisplay(d);
+    return isWaiting(r) ? `off:${d.displayId}` : r.display.id;
+  };
+  return store.get().docks.some((d) => d.id !== exceptId && d.edge === edge && where(d) === target);
 }
 
 function displayList() {
-  const primaryId = screen.getPrimaryDisplay().id;
-  return screen.getAllDisplays().map((d, i) => ({
+  const primaryId = primaryDisplayId();
+  return allDisplays().map((d, i) => ({
     id: d.id,
     isPrimary: d.id === primaryId,
     label: `모니터 ${i + 1} · ${d.size.width}×${d.size.height}${d.id === primaryId ? ' (주)' : ''}`,
@@ -164,12 +177,50 @@ function boundsFor(dock, panelW) {
   return { x: Math.round(x), y: wa.y, width: total, height: wa.height };
 }
 
+const differs = (a, b) => Math.abs(a.x - b.x) > 2 || Math.abs(a.y - b.y) > 2
+                      || Math.abs(a.width - b.width) > 2 || Math.abs(a.height - b.height) > 2;
+
+/*
+ * 가장자리 하나를 지금 모니터 상태에 맞게 둔다.
+ *
+ *  - 고른 모니터가 꺼져 있으면(윈도우 목록에서 사라졌으면) 창을 숨기고 기다린다.
+ *    예전에는 주 모니터로 옮겨 붙였는데, 모니터를 끌 때마다 메모가 주 모니터로 넘어왔다.
+ *  - 그동안 트레이·단축키로 직접 부르면(peek) 그때만 주 모니터에 잠깐 꺼내 보인다.
+ *  - 모니터가 돌아오면 원래 자리에 다시 나타난다.
+ *
+ * 모니터 알림이 올 때와 1.5초마다 한 번씩 불린다. 알림을 놓쳐도 결국 맞는 상태가 된다.
+ */
 function reposition(dockId) {
   const pane = panes.get(dockId);
   const dock = store.getDock(dockId);
   if (!pane || !dock || pane.win.isDestroyed()) return;
-  if (pane.resizing) return;   // 모서리를 끄는 중에 창 크기를 되돌리면 드래그가 끊긴다
-  pane.win.setBounds(boundsFor(dock, effectiveWidth(pane)));
+
+  const waiting = isWaiting(resolveDisplay(dock));
+  if (!waiting) pane.peek = false;          // 모니터가 돌아왔으면 잠깐 꺼내 보기는 끝
+
+  if (waiting && !pane.peek) {
+    if (!pane.waiting) {
+      pane.waiting = true;
+      if (pane.expanded) slideTo(dockId, false);
+      if (pane.win.isVisible()) pane.win.hide();
+      refreshTrayMenu();
+    }
+    return;
+  }
+  if (pane.waiting) {
+    pane.waiting = false;
+    refreshTrayMenu();
+  }
+
+  if (!pane.resizing) {   // 모서리를 끄는 중에 창 크기를 되돌리면 드래그가 끊긴다
+    const want = boundsFor(dock, effectiveWidth(pane));
+    if (differs(want, pane.win.getBounds())) pane.win.setBounds(want);
+  }
+  if (pane.ready && !hiddenAll && !pane.win.isVisible()) {
+    pane.win.showInactive();
+    pane.interactive = null;                // 숨어 있던 동안의 상태는 믿지 않는다
+    setInteractive(pane, !!pane.expanded);
+  }
 }
 
 function repositionAll() {
@@ -187,6 +238,14 @@ function slideTo(dockId, isExpanded, opts = {}) {
   const pane = panes.get(dockId);
   if (!pane || pane.win.isDestroyed()) return;
 
+  // 모니터가 꺼져 숨어 있는 가장자리를 트레이·단축키로 부르면, 그동안만 주 모니터에 꺼내 보인다.
+  // 다른 곳을 눌러 닫힐 때까지 열려 있도록 포커스를 준다.
+  if (isExpanded && pane.waiting) {
+    pane.peek = true;
+    reposition(dockId);
+    opts = { ...opts, focus: true };
+  }
+
   const mode = store.get().settings.closeMode;
   // '다른 창 클릭 시 닫기' 모드는 blur 이벤트가 있어야 하므로 열 때 포커스를 가져온다.
   const focus = opts.focus !== undefined ? opts.focus : mode === 'focus';
@@ -199,6 +258,12 @@ function slideTo(dockId, isExpanded, opts = {}) {
   pane.win.webContents.send('panel:state', { expanded: isExpanded });
   if (isExpanded && focus) pane.win.focus();
   if (!isExpanded && pane.win.isFocused()) pane.win.blur();
+
+  // 잠깐 꺼내 본 것이었으면, 닫을 때 모니터가 아직 꺼져 있으면 다시 숨는다
+  if (!isExpanded && pane.peek) {
+    pane.peek = false;
+    reposition(dockId);
+  }
 }
 
 // ---------------------------------------------------------------- 창
@@ -238,8 +303,9 @@ function createPane(dock) {
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
   win.once('ready-to-show', () => {
-    win.showInactive();               // 시작하자마자 포커스를 빼앗지 않는다
+    pane.ready = true;
     win.setIgnoreMouseEvents(true, { forward: true });
+    reposition(dock.id);              // 보일 자리면 띄운다 (포커스는 빼앗지 않는다). 꺼진 모니터면 기다린다
   });
 
   // 렌더러가 죽거나 CSP에 막히면 투명 창이라 아무것도 안 보인다. 원인을 콘솔로 남긴다.
@@ -299,7 +365,7 @@ function startCursorWatch() {
     const visibility = store.get().settings.tabVisibility || 'always';
 
     for (const [dockId, pane] of panes) {
-      if (pane.win.isDestroyed()) continue;
+      if (pane.win.isDestroyed() || !pane.win.isVisible()) continue;
       const dock = store.getDock(dockId);
       if (!dock) continue;
       const b = pane.win.getBounds();
@@ -349,7 +415,7 @@ const DROP_SLACK = 60;
 
 function dropTargetAt(p, exceptDockId) {
   for (const [dockId, pane] of panes) {
-    if (dockId === exceptDockId || pane.win.isDestroyed()) continue;
+    if (dockId === exceptDockId || pane.win.isDestroyed() || !pane.win.isVisible()) continue;
     const dock = store.getDock(dockId);
     if (!dock) continue;
     const b = pane.win.getBounds();
@@ -385,26 +451,38 @@ function startPlacementWatch() {
   clearInterval(placementTimer);
   placementTimer = setInterval(() => {
     if (hiddenAll) return;
+    // 모니터 알림을 놓쳤어도 여기서 따라잡는다 (켜진 모니터가 돌아왔는지도 본다)
+    refreshDockDisplays();
     for (const [dockId, pane] of panes) {
       if (pane.win.isDestroyed() || pane.resizing) continue;
       const dock = store.getDock(dockId);
       if (!dock) continue;
-      const want = boundsFor(dock, effectiveWidth(pane));
-      const got = pane.win.getBounds();
-      const off = Math.abs(got.x - want.x) > 2 || Math.abs(got.y - want.y) > 2
-               || Math.abs(got.width - want.width) > 2 || Math.abs(got.height - want.height) > 2;
-      if (!off) continue;
-      logPlacement(dock, want, got);
-      pane.win.setBounds(want);
+      const waiting = isWaiting(resolveDisplay(dock));
+      if (!waiting && !pane.waiting && pane.win.isVisible()) {
+        const want = boundsFor(dock, effectiveWidth(pane));
+        const got = pane.win.getBounds();
+        if (differs(want, got)) logPlacement(dock, want, got);
+      }
+      reposition(dockId);
     }
   }, PLACEMENT_CHECK_MS);
+}
+
+/** 모니터를 켜고 끄거나 배치를 바꿨을 때. */
+function handleDisplaysChanged() {
+  refreshDockDisplays();
+  repositionAll();
+  broadcastDocks();
+  for (const pane of panes.values()) {
+    if (!pane.win.isDestroyed()) pane.win.webContents.send('displays:changed', displayList());
+  }
 }
 
 /** 언제 왜 밀려났는지 나중에 알 수 있게 짧게 남긴다 (userData/placement.log). */
 function logPlacement(dock, want, got) {
   try {
     const file = path.join(USER_DATA, 'placement.log');
-    const displays = screen.getAllDisplays()
+    const displays = allDisplays()
       .map((d) => `${d.id}@${d.bounds.x},${d.bounds.y} ${d.bounds.width}x${d.bounds.height}`).join(' | ');
     const line = `${new Date().toISOString()} ${dockLabel(dock)} 기대 ${JSON.stringify(want)} `
                + `실제 ${JSON.stringify(got)} 모니터 [${displays}]\n`;
@@ -418,9 +496,11 @@ function logPlacement(dock, want, got) {
 // ---------------------------------------------------------------- 트레이
 
 function dockLabel(dock) {
-  const displays = displayList();
-  const i = displays.findIndex((d) => d.id === displayFor(dock).id);
   const side = dock.edge === 'right' ? '오른쪽' : '왼쪽';
+  const r = resolveDisplay(dock);
+  if (isWaiting(r)) return `꺼진 모니터 · ${side}`;
+  const displays = displayList();
+  const i = displays.findIndex((d) => d.id === r.display.id);
   return displays.length > 1 ? `모니터 ${i + 1} · ${side}` : side;
 }
 
@@ -440,7 +520,7 @@ function refreshTrayMenu() {
 
   tray.setContextMenu(Menu.buildFromTemplate([
     ...docks.map((dock) => ({
-      label: `${dockLabel(dock)} 메모`,
+      label: `${dockLabel(dock)} 메모${(panes.get(dock.id) || {}).waiting ? ' (켜지면 다시 나타남)' : ''}`,
       submenu: [
         { label: '열기 / 닫기', click: () => toggleDock(dock.id) },
         { label: '설정…', click: () => openSettings(dock.id) },
@@ -512,8 +592,8 @@ function setHiddenAll(next) {
       slideTo(dockId, false);
       pane.win.hide();
     } else {
-      pane.win.showInactive();
       setInteractive(pane, false);
+      reposition(dockId);             // 띄울 자리면 띄우고, 꺼진 모니터면 계속 기다린다
     }
   }
   refreshTrayMenu();
@@ -939,8 +1019,8 @@ function registerIpc() {
     dock.edge = edge;
     dock.displayId = displayId;
     // 고른 모니터를 재부팅 뒤에도 다시 찾을 수 있게 화면 좌표를 같이 남긴다
-    const picked = displayId == null ? null : screen.getAllDisplays().find((d) => d.id === displayId);
-    if (picked) dock.displayHint = hintOf(picked);
+    const picked = displayId == null ? null : allDisplays().find((d) => d.id === displayId);
+    if (picked) dock.displayHint = { ...hintOf(picked), count: allDisplays().length };
     else delete dock.displayHint;
     store.save();
     reposition(dock.id);
@@ -954,8 +1034,8 @@ function registerIpc() {
       for (const edge of ['right', 'left']) {
         if (!isSpotTaken(d.id, edge)) {
           const dock = store.addDock(edge, d.isPrimary ? null : d.id);
-          const disp = !d.isPrimary && screen.getAllDisplays().find((x) => x.id === d.id);
-          if (disp) { dock.displayHint = hintOf(disp); store.save(); }
+          const disp = !d.isPrimary && allDisplays().find((x) => x.id === d.id);
+          if (disp) { dock.displayHint = { ...hintOf(disp), count: allDisplays().length }; store.save(); }
           createPane(dock);
           broadcastDocks();
           return { ok: true, id: dock.id };
@@ -974,6 +1054,27 @@ function registerIpc() {
   });
 
   // ── 패널 여닫기 / 폭 ──────────────────────────────────
+
+  /*
+   * 테스트 전용. 임시 프로필(--user-data-dir)로 띄운 경우에만 등록된다.
+   * 모니터를 실제로 끌 수는 없으니 모니터 목록을 바꿔 끼워 '꺼짐·켜짐'을 흉내 낸다.
+   */
+  if (customProfile) {
+    // silent: 알림 없이 목록만 바꾼다 (모니터 알림을 놓친 상황 — 1.5초 감시가 따라잡아야 한다)
+    ipcMain.handle('test:fakeDisplays', (_e, fake, silent) => {
+      fakeDisplays = fake || null;
+      if (!silent) handleDisplaysChanged();
+      return true;
+    });
+    ipcMain.handle('test:paneInfo', () => [...panes].map(([id, p]) => ({
+      id, visible: p.win.isVisible(), waiting: !!p.waiting, peek: !!p.peek,
+      expanded: !!p.expanded, bounds: p.win.getBounds(),
+      label: store.getDock(id) ? dockLabel(store.getDock(id)) : '',
+    })));
+    ipcMain.handle('test:toggleDock', (_e, id) => { toggleDock(id); return true; });
+    ipcMain.handle('test:collapse', (_e, id) => { slideTo(id, false); return true; });
+    ipcMain.handle('test:setHiddenAll', (_e, v) => setHiddenAll(v));
+  }
 
   ipcMain.handle('tabs:dragging', (e, value) => {
     const pane = paneOf(e);
@@ -1257,14 +1358,7 @@ if (!app.requestSingleInstanceLock()) {
     if (failed.length) console.warn('등록하지 못한 단축키:', failed.join(', '));
     if (DEV) console.log('[displays]', JSON.stringify(displayList()));
 
-    const onDisplaysChanged = () => {
-      refreshDockDisplays();
-      repositionAll();
-      broadcastDocks();
-      for (const pane of panes.values()) {
-        if (!pane.win.isDestroyed()) pane.win.webContents.send('displays:changed', displayList());
-      }
-    };
+    const onDisplaysChanged = handleDisplaysChanged;
     screen.on('display-metrics-changed', onDisplaysChanged);
     screen.on('display-added', onDisplaysChanged);
     screen.on('display-removed', onDisplaysChanged);
