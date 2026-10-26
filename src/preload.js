@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('sideMemo', {
     fakeDisplays: (fake, silent) => ipcRenderer.invoke('test:fakeDisplays', fake, silent),
     paneInfo: () => ipcRenderer.invoke('test:paneInfo'),
     toggleDock: (id) => ipcRenderer.invoke('test:toggleDock', id),
+    settleMs: (ms) => ipcRenderer.invoke('test:settleMs', ms),
+    forgetSession: () => ipcRenderer.invoke('test:forgetSession'),
     collapse: (id) => ipcRenderer.invoke('test:collapse', id),
     setHiddenAll: (v) => ipcRenderer.invoke('test:setHiddenAll', v),
   },

@@ -109,6 +109,74 @@ const after = [mon(1546791665, 0), mon(3987148736, 1920)];
   check('이름으로 찾은 건 임시로만 쓰고 저장하지 않는다', JSON.stringify(d2) === snap);
 }
 
+// ── 잠금·절전에서 깨어날 때 (10월 26일 실제로 겪은 것) ──
+// 오른쪽 메모는 오른쪽 모니터, 왼쪽 메모는 주 모니터에 두었는데, 아침에 잠금을 풀고 나니
+// 오른쪽 메모가 주 모니터로 넘어와 저장까지 돼 버렸다 (백업: right@16516299 hint x=0).
+// 깨어나는 순서: 오른쪽 모니터만 먼저 x=0 에 혼자 잡힘 → 몇 초 뒤 주 모니터가 켜지며 원래 배치로.
+{
+  const { confirmableId } = require('../src/main/displays');
+  const P = 16516299, S = 854308167;
+  const normal = [mon(P, 0), mon(S, 1920)];
+  const sOnlyAt0 = [mon(S, 0)];                 // 주 모니터가 아직 안 켜짐
+  const swapped = [mon(S, 0), mon(P, 1920)];    // 잠깐 자리가 뒤바뀌어 잡힘
+
+  const right = { displayId: S, displayHint: { ...hintOf(mon(S, 1920)), count: 2 } };
+  const left = { displayId: P, displayHint: { ...hintOf(mon(P, 0)), count: 2 } };
+  const saved = JSON.stringify([right, left]);
+  const session = new Map();
+  const where = (list, dock, settled = true) => {
+    const r = pickDisplay(list, list[0].id, dock, { sessionId: session.get(dock) ?? null, settled });
+    const id = confirmableId(r, list, dock, settled);
+    if (id != null) session.set(dock, id);
+    return r;
+  };
+
+  where(normal, right); where(normal, left);
+  check('평소엔 번호를 확인해 둔다', session.get(right) === S && session.get(left) === P);
+
+  // ① 오른쪽 모니터만 x=0 에 혼자 잡힘
+  let r = where(sOnlyAt0, right, false);
+  let l = where(sOnlyAt0, left, false);
+  check('① 오른쪽 메모는 오른쪽 모니터를 따라간다 (자리가 x=0 이어도)', r.display.id === S, r.how);
+  check('① 왼쪽 메모는 같은 자리(x=0)의 다른 모니터로 가지 않고 기다린다', isWaiting(l), l.how);
+  refreshDocks([right, left], sOnlyAt0, S, { settled: false });
+  refreshDocks([right, left], sOnlyAt0, S, { settled: true });
+  check('① 그 순간의 배치를 저장하지 않는다', JSON.stringify([right, left]) === saved);
+
+  // ② 잠깐 자리가 뒤바뀌어 잡힘
+  r = where(swapped, right, false);
+  l = where(swapped, left, false);
+  check('② 자리가 뒤바뀌어도 각자 원래 모니터를 따라간다', r.display.id === S && l.display.id === P, `${r.how}/${l.how}`);
+  refreshDocks([right, left], swapped, S, { settled: true });
+  check('② 뒤바뀐 배치도 저장하지 않는다', JSON.stringify([right, left]) === saved);
+
+  // ③ 원래 배치로 돌아옴
+  r = where(normal, right);
+  l = where(normal, left);
+  check('③ 오른쪽 메모는 오른쪽 모니터, 왼쪽 메모는 주 모니터', r.display.id === S && l.display.id === P, `${r.how}/${l.how}`);
+  refreshDocks([right, left], normal, P, { settled: true });
+  check('③ 깨어난 뒤에도 고른 모니터가 그대로 저장돼 있다', JSON.stringify([right, left]) === saved);
+
+  // 이번 실행 중 번호를 아직 확인하지 못했어도(켜자마자 잠금 해제 등) 같은 결과여야 한다
+  session.clear();
+  const r0 = where(sOnlyAt0, right, false), l0 = where(sOnlyAt0, left, false);
+  check('막 켜진 직후라도 오른쪽 메모는 오른쪽 모니터, 왼쪽 메모는 기다린다',
+    r0.display.id === S && isWaiting(l0), `${r0.how}/${l0.how}`);
+  check('배치가 흔들리는 동안엔 번호를 확인해 주지 않는다', session.size === 0);
+}
+
+{
+  // 재부팅으로 번호가 새로 매겨진 경우는 여전히 좌표로 찾고, 번호만 고쳐 적는다
+  const { confirmableId } = require('../src/main/displays');
+  const right = { displayId: 854308167, displayHint: { ...hintOf(mon(854308167, 1920)), count: 2 } };
+  const rebooted = [mon(11, 0), mon(22, 1920)];
+  const r = pickDisplay(rebooted, 11, right);
+  check('재부팅 뒤 번호가 바뀌어도 좌표로 찾는다', r.display.id === 22 && r.how === 'bounds', r.how);
+  check('그때 번호를 확인해 둔다', confirmableId(r, rebooted, right, true) === 22);
+  refreshDocks([right], rebooted, 11, { settled: true });
+  check('번호만 고치고 고른 자리는 그대로', right.displayId === 22 && right.displayHint.x === 1920, JSON.stringify(right));
+}
+
 // ── 모니터를 끄고 켜는 경우 (오른쪽 모니터에 둔 메모) ──
 {
   const picked = { displayId: 3987148736, displayHint: { ...hintOf(after[1]), count: 2 } };

@@ -52,13 +52,16 @@ if (hasNonAscii) {
   buildDir = tmp;
   console.log(`\n경로에 한글이 있어 임시 폴더에서 빌드합니다:\n  ${tmp}`);
 
-  for (const name of ['src', 'assets', 'package.json', 'README.md', 'THIRD-PARTY-NOTICES.md']) {
+  // package-lock.json 을 꼭 같이 가져간다. 없으면 그날의 최신 electron-builder 를 받아와서
+  // 같은 코드라도 설치본이 달라진다 (실제로 26.15.3 → 26.18.0 이 되며 7MB 커졌다).
+  for (const name of ['src', 'assets', 'package.json', 'package-lock.json', 'README.md', 'THIRD-PARTY-NOTICES.md']) {
     const src = path.join(ROOT, name);
     if (fs.existsSync(src)) fs.cpSync(src, path.join(tmp, name), { recursive: true });
   }
   // node_modules 를 통째로 복사하면 오래 걸린다. electron 과 builder 만 있으면 된다.
   console.log('의존성 설치 중… (몇 분 걸릴 수 있습니다)');
-  if (!run('npm', ['install', '--no-audit', '--no-fund'], tmp)) {
+  // install 이 아니라 ci: 잠가 둔 버전 그대로 설치한다 (GitHub 빌드와 똑같이)
+  if (!run('npm', ['ci', '--no-audit', '--no-fund'], tmp)) {
     console.error('의존성 설치 실패');
     process.exit(1);
   }

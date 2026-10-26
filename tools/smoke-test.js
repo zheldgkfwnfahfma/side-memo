@@ -138,6 +138,10 @@ function pushWindows(pid, dx) {
     }
     check('임시 프로필 사용', true, PROFILE);
 
+    // 모니터 배치가 가라앉을 때까지(실제 3초) 기다리지 않도록 테스트에서는 짧게 한다
+    await evalInPage(ws, 'window.sideMemo.test.settleMs(200)');
+    await sleep(1800);
+
     // ── 초기 상태 ──────────────────────────────────────
     check('창이 하나 뜬다', targets.length === 1, `${targets.length}개`);
     check('상태 로딩됨', await evalInPage(ws, '!!(state && state.dock && state.settings)'));
@@ -554,10 +558,17 @@ function pushWindows(pid, dx) {
     const pushOut = pushWindows(child.pid, -700);
     await sleep(150);
     const pushedTo = await posOf(ws2);
-    await sleep(2500);
-    const backTo = await posOf(ws2);
+    // 1.5초마다 확인하므로 늦어도 몇 초 안에 돌아와야 한다. 걸린 시간도 남긴다.
+    let backTo = pushedTo;
+    const pushedAt = Date.now();
+    while (Date.now() - pushedAt < 4000) {
+      await sleep(250);
+      backTo = await posOf(ws2);
+      if (backTo.x === home.x && backTo.y === home.y) break;
+    }
+    const tookMs = Date.now() - pushedAt;
     check('밖에서 창을 밀어 볼 수 있다', pushedTo.x !== home.x, JSON.stringify({ home, pushedTo, pushOut }));
-    check('밀려난 창이 제자리로 돌아온다', backTo.x === home.x && backTo.y === home.y, JSON.stringify({ home, backTo }));
+    check('밀려난 창이 제자리로 돌아온다', backTo.x === home.x && backTo.y === home.y, JSON.stringify({ home, backTo, tookMs }));
     check('밀려난 기록이 남는다', fs.existsSync(path.join(PROFILE, 'placement.log')));
     ws2.close();
 
@@ -1541,6 +1552,92 @@ function pushWindows(pid, dx) {
     // 정리: 추가한 가장자리를 지우고 진짜 모니터 목록으로 되돌린다
     for (const id of added) await call(`window.sideMemo.removeDock(${JSON.stringify(id)})`);
     await setDisplays(null);
+    await sleep(800);
+
+    // ── 잠금·절전에서 깨어나기 (10월 26일 실제로 겪은 순서) ──
+    // 오른쪽 메모 = 오른쪽 모니터, 이 창의 메모 = 주 모니터로 직접 고른 상태에서,
+    // ① 오른쪽 모니터만 x=0 에 혼자 잡힘 → ② 잠깐 자리가 뒤바뀜 → ③ 원래 배치.
+    // 예전에는 ①에서 저장값이 고쳐 써져, 깨어난 뒤 오른쪽 메모가 주 모니터에 붙었다.
+    const setTopo = (list, primaryId, silent) => call(`window.sideMemo.test.fakeDisplays(${JSON.stringify(
+      list ? { primaryId, list } : null)}, ${!!silent})`);
+    await call('window.sideMemo.test.settleMs(400)');
+    await setTopo([P, S], 1001);
+    await sleep(900);
+    await call('window.sideMemo.updateDock({ displayId: 1001 })');          // 이 창의 메모 → 주 모니터
+    const wakeAdded = [];
+    for (let i = 0; i < 2; i++) wakeAdded.push((await call('window.sideMemo.addDock()')).id);
+    await sleep(1200);
+    let wp = await info();
+    const mainId = wp.find((p) => !wakeAdded.includes(p.id)).id;
+    const rightId = wp.find((p) => wakeAdded.includes(p.id) && p.bounds.x >= 1920 && /오른쪽/.test(p.label));
+    const extra = wakeAdded.filter((id) => !rightId || id !== rightId.id);
+    for (const id of extra) await call(`window.sideMemo.removeDock(${JSON.stringify(id)})`);
+    await sleep(600);
+    check('주 모니터·오른쪽 모니터에 메모를 하나씩 둔다', !!rightId, JSON.stringify(wp.map((p) => [p.label, p.bounds.x])));
+    const rid = rightId && rightId.id;
+    const diskOf = () => JSON.parse(fs.readFileSync(path.join(PROFILE, 'data.json'), 'utf8')).docks
+      .filter((d) => d.id === rid || d.id === mainId)
+      .map((d) => `${d.id === rid ? 'R' : 'M'}:${d.displayId}@${d.displayHint && d.displayHint.x}`).sort().join(' ');
+    await sleep(600);
+    const diskBefore = diskOf();
+    const paneOf = (list, id) => list.find((p) => p.id === id);
+
+    // ① 오른쪽 모니터만 x=0 에 혼자 잡힘 (주 모니터는 아직 안 켜짐)
+    await setTopo([mon(2002, 0)], 2002);
+    await sleep(900);
+    wp = await info();
+    check('① 오른쪽 메모는 오른쪽 모니터를 따라간다', paneOf(wp, rid).visible && paneOf(wp, rid).bounds.x < 1920,
+      JSON.stringify(paneOf(wp, rid)));
+    check('① 주 모니터의 메모는 오른쪽 모니터로 가지 않고 숨어서 기다린다',
+      !paneOf(wp, mainId).visible && paneOf(wp, mainId).waiting, JSON.stringify(paneOf(wp, mainId)));
+
+    // ② 잠깐 자리가 뒤바뀌어 잡힘 (오른쪽 모니터가 x=0, 주 모니터가 x=1920)
+    await setTopo([mon(2002, 0), mon(1001, 1920)], 2002);
+    await sleep(900);
+    wp = await info();
+    check('② 자리가 뒤바뀌어도 각자 원래 모니터를 따라간다',
+      paneOf(wp, rid).bounds.x < 1920 && paneOf(wp, mainId).bounds.x >= 1920,
+      JSON.stringify([paneOf(wp, rid).bounds.x, paneOf(wp, mainId).bounds.x]));
+
+    // ③ 원래 배치
+    await setTopo([P, S], 1001);
+    await sleep(900);
+    wp = await info();
+    check('③ 깨어난 뒤 오른쪽 메모는 오른쪽 모니터 오른쪽 끝',
+      paneOf(wp, rid).visible && paneOf(wp, rid).bounds.x + paneOf(wp, rid).bounds.width === 3840,
+      JSON.stringify(paneOf(wp, rid).bounds));
+    check('③ 주 모니터의 메모는 주 모니터에 다시 나타난다',
+      paneOf(wp, mainId).visible && paneOf(wp, mainId).bounds.x + paneOf(wp, mainId).bounds.width === 1920,
+      JSON.stringify(paneOf(wp, mainId).bounds));
+    await sleep(600);
+    check('깨어나는 동안 고른 모니터 정보가 한 번도 바뀌지 않았다', diskOf() === diskBefore, `${diskBefore} → ${diskOf()}`);
+
+    // 배치가 흔들리는 동안엔 창을 옮기지 않는다 (가라앉은 뒤에 한 번만)
+    await call('window.sideMemo.test.settleMs(1500)');
+    await setTopo([mon(2002, 0), mon(1001, 1920)], 2002);
+    await sleep(300);
+    const early = paneOf(await info(), rid).bounds.x;
+    await sleep(1800);
+    const late = paneOf(await info(), rid).bounds.x;
+    check('흔들리는 동안엔 옮기지 않고, 가라앉은 뒤에 옮긴다', early >= 1920 && late < 1920, `${early} → ${late}`);
+    await call('window.sideMemo.test.settleMs(400)');
+    await setTopo([P, S], 1001);
+    await sleep(900);
+
+    // 재부팅: 이번 실행 중 확인한 번호를 잊고, 윈도우가 번호를 새로 매긴 상태로 켜진다
+    await call('window.sideMemo.test.forgetSession()');
+    await setTopo([mon(1111, 0), mon(2222, 1920)], 1111);
+    await sleep(900);
+    wp = await info();
+    check('재부팅 뒤 번호가 바뀌어도 각자 제자리', paneOf(wp, rid).bounds.x >= 1920 && paneOf(wp, mainId).bounds.x < 1920,
+      JSON.stringify([paneOf(wp, rid).bounds.x, paneOf(wp, mainId).bounds.x]));
+    await sleep(600);
+    check('재부팅 뒤엔 번호만 새로 적고 고른 자리는 그대로', diskOf() === `M:1111@0 R:2222@1920`, diskOf());
+
+    // 정리
+    await call(`window.sideMemo.removeDock(${JSON.stringify(rid)})`);
+    await call('window.sideMemo.updateDock({ displayId: null })');
+    await setTopo(null);
     await sleep(800);
 
     // ── 렌더러 오류 ───────────────────────────────────

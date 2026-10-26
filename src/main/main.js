@@ -7,7 +7,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 const { Store } = require('./store');
-const { pickDisplay, hintOf, refreshDocks, isWaiting } = require('./displays');
+const { pickDisplay, hintOf, refreshDocks, isWaiting, confirmableId } = require('./displays');
 const { createShare, htmlToText, safeFileName, uniqueStoredName } = require('./share');
 
 const TAB_W = 34;              // 화면 가장자리에 항상 남아 있는 탭 스트립 폭
@@ -123,9 +123,42 @@ let fakeDisplays = null;
 function allDisplays() { return fakeDisplays ? fakeDisplays.list : screen.getAllDisplays(); }
 function primaryDisplayId() { return fakeDisplays ? fakeDisplays.primaryId : screen.getPrimaryDisplay().id; }
 
+/*
+ * 모니터 배치가 가라앉았는지.
+ * 잠금·절전에서 깨어나는 몇 초 동안 윈도우는 배치를 잠깐 이상하게 보고한다
+ * (주 모니터가 늦게 켜져 오른쪽 모니터 혼자 x=0 에 잡히는 식). 그동안엔 창을 옮기거나
+ * 번호를 확인하지 않고, 배치가 SETTLE_MS 동안 그대로일 때 비로소 맞춘다.
+ */
+let SETTLE_MS = 3000;
+let topologyKey = '';
+let topologyChangedAt = Date.now();   // 막 켜진 직후도 '흔들리는 중'으로 본다
+
+function noteTopology() {
+  const key = allDisplays()
+    .map((d) => `${d.id}@${d.bounds.x},${d.bounds.y},${d.bounds.width}x${d.bounds.height}`)
+    .sort().join('|') + '#' + primaryDisplayId();
+  if (key === topologyKey) return false;
+  topologyKey = key;
+  topologyChangedAt = Date.now();
+  return true;
+}
+
+function settled() {
+  return Date.now() - topologyChangedAt >= SETTLE_MS;
+}
+
+/*
+ * 이번 실행 중 '이 가장자리는 이 모니터'라고 확인된 번호.
+ * 배치는 흔들려도 번호는 그대로라, 깨어나는 동안엔 좌표보다 이걸 믿는다. 저장하지 않는다.
+ */
+const sessionIds = new Map();
+
 /* 모니터 id 는 재부팅하면 바뀔 수 있다. 찾는 규칙은 displays.js 에 있다. */
 function resolveDisplay(dock) {
-  return pickDisplay(allDisplays(), primaryDisplayId(), dock);
+  return pickDisplay(allDisplays(), primaryDisplayId(), dock, {
+    sessionId: sessionIds.has(dock.id) ? sessionIds.get(dock.id) : null,
+    settled: settled(),
+  });
 }
 
 function displayFor(dock) {
@@ -134,7 +167,7 @@ function displayFor(dock) {
 
 /** 저장된 모니터 정보를 지금 화면에 맞춰 고쳐 적는다. 규칙은 displays.js 의 refreshDocks. */
 function refreshDockDisplays() {
-  const changed = refreshDocks(store.get().docks, allDisplays(), primaryDisplayId());
+  const changed = refreshDocks(store.get().docks, allDisplays(), primaryDisplayId(), { settled: settled() });
   if (changed) store.save();
   return changed;
 }
@@ -195,7 +228,8 @@ function reposition(dockId) {
   const dock = store.getDock(dockId);
   if (!pane || !dock || pane.win.isDestroyed()) return;
 
-  const waiting = isWaiting(resolveDisplay(dock));
+  const result = resolveDisplay(dock);
+  const waiting = isWaiting(result);
   if (!waiting) pane.peek = false;          // 모니터가 돌아왔으면 잠깐 꺼내 보기는 끝
 
   if (waiting && !pane.peek) {
@@ -207,6 +241,13 @@ function reposition(dockId) {
     }
     return;
   }
+  // 배치가 흔들리는 중이면 옮기지도 띄우지도 않는다. 잠깐 뒤 가라앉으면 그때 맞춘다.
+  // (숨기기는 위에서 바로 했다. 직접 불러낸 경우는 기다리지 않는다)
+  if (!settled() && !pane.peek) return;
+
+  const sure = confirmableId(result, allDisplays(), dock, true);
+  if (sure != null) sessionIds.set(dockId, sure);
+
   if (pane.waiting) {
     pane.waiting = false;
     refreshTrayMenu();
@@ -451,14 +492,16 @@ function startPlacementWatch() {
   clearInterval(placementTimer);
   placementTimer = setInterval(() => {
     if (hiddenAll) return;
-    // 모니터 알림을 놓쳤어도 여기서 따라잡는다 (켜진 모니터가 돌아왔는지도 본다)
+    // 모니터 알림을 놓쳤어도 여기서 따라잡는다. 배치가 바뀐 걸 여기서 처음 알았으면
+    // 알림이 온 것과 똑같이 처리한다 (가라앉는 즉시 맞추도록 예약까지).
+    if (noteTopology()) { handleDisplaysChanged(); return; }
     refreshDockDisplays();
     for (const [dockId, pane] of panes) {
       if (pane.win.isDestroyed() || pane.resizing) continue;
       const dock = store.getDock(dockId);
       if (!dock) continue;
       const waiting = isWaiting(resolveDisplay(dock));
-      if (!waiting && !pane.waiting && pane.win.isVisible()) {
+      if (settled() && !waiting && !pane.waiting && pane.win.isVisible()) {
         const want = boundsFor(dock, effectiveWidth(pane));
         const got = pane.win.getBounds();
         if (differs(want, got)) logPlacement(dock, want, got);
@@ -469,9 +512,16 @@ function startPlacementWatch() {
 }
 
 /** 모니터를 켜고 끄거나 배치를 바꿨을 때. */
+let settleTimer = null;
+
 function handleDisplaysChanged() {
+  noteTopology();
   refreshDockDisplays();
   repositionAll();
+  // 가라앉으면 바로 제자리로 (1.5초 감시를 기다리지 않는다)
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(handleDisplaysChanged, Math.max(0, SETTLE_MS - (Date.now() - topologyChangedAt)) + 100);
+  if (settled()) clearTimeout(settleTimer);
   broadcastDocks();
   for (const pane of panes.values()) {
     if (!pane.win.isDestroyed()) pane.win.webContents.send('displays:changed', displayList());
@@ -1022,6 +1072,8 @@ function registerIpc() {
     const picked = displayId == null ? null : allDisplays().find((d) => d.id === displayId);
     if (picked) dock.displayHint = { ...hintOf(picked), count: allDisplays().length };
     else delete dock.displayHint;
+    if (picked) sessionIds.set(dock.id, picked.id);
+    else sessionIds.delete(dock.id);
     store.save();
     reposition(dock.id);
     broadcastDocks();
@@ -1035,7 +1087,11 @@ function registerIpc() {
         if (!isSpotTaken(d.id, edge)) {
           const dock = store.addDock(edge, d.isPrimary ? null : d.id);
           const disp = !d.isPrimary && allDisplays().find((x) => x.id === d.id);
-          if (disp) { dock.displayHint = { ...hintOf(disp), count: allDisplays().length }; store.save(); }
+          if (disp) {
+            dock.displayHint = { ...hintOf(disp), count: allDisplays().length };
+            sessionIds.set(dock.id, disp.id);
+            store.save();
+          }
           createPane(dock);
           broadcastDocks();
           return { ok: true, id: dock.id };
@@ -1072,6 +1128,8 @@ function registerIpc() {
       label: store.getDock(id) ? dockLabel(store.getDock(id)) : '',
     })));
     ipcMain.handle('test:toggleDock', (_e, id) => { toggleDock(id); return true; });
+    ipcMain.handle('test:settleMs', (_e, ms) => { SETTLE_MS = Number(ms) || 0; return SETTLE_MS; });
+    ipcMain.handle('test:forgetSession', () => { sessionIds.clear(); return true; });
     ipcMain.handle('test:collapse', (_e, id) => { slideTo(id, false); return true; });
     ipcMain.handle('test:setHiddenAll', (_e, v) => setHiddenAll(v));
   }
@@ -1352,6 +1410,7 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc();
     startCursorWatch();
     startPlacementWatch();
+    handleDisplaysChanged();   // 배치가 가라앉는 대로(약 3초) 창을 띄운다
     startFileWatch();
 
     const failed = applyShortcuts();
