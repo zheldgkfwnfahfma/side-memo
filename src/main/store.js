@@ -38,6 +38,7 @@ class Store {
         textColor: '#4C1D95',
         peekOnHover: true,        // 탭 제목에 마우스를 올리면 열기
         wheelFontSize: true,      // Ctrl+휠로 글자 크기 조절
+        gpuAcceleration: false,   // 그래픽 가속 (끄면 메모리를 덜 쓴다, 바꾸면 다시 켜야 적용)
         updateCheck: 'launch',    // 새 버전 확인: 'launch' 켤 때 한 번 | 'interval' 간격마다 | 'daily' 매일 | 'off'
         updateCheckHours: 4,      // 'interval' 일 때 간격(시간)
         updateCheckTime: '09:00', // 'daily' 일 때 확인 시각

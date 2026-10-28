@@ -387,6 +387,8 @@ button { font-family: inherit; cursor: pointer; }
 .update-planned { margin: 0; padding: 8px 10px; border-radius: 9px; background: #f5f3ff; color: #4c1d95; font-weight: 700; }
 .link-btn { border: 0; background: none; color: #7c3aed; text-decoration: underline; cursor: pointer; font-size: 12px; }
 .update-default-time { margin: 8px 0 0; }
+.gpu-restart { margin: -2px 0 8px 24px; font-size: 12px; opacity: .8; }
+.gpu-restart button { margin-left: 6px; padding: 2px 8px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; }
 #update-field .sub-label { margin: 12px 0 6px; font-weight: 700; opacity: .75; }
 #update-field select { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 7px; background: #fff; }
 .update-default-time input { padding: 5px 8px; border: 1px solid #ddd; border-radius: 7px; }

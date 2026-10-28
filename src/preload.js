@@ -59,6 +59,8 @@ contextBridge.exposeInMainWorld('sideMemo', {
 
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   quit: () => ipcRenderer.invoke('app:quit'),
+  gpuRunning: () => ipcRenderer.invoke('app:gpu'),
+  relaunch: () => ipcRenderer.invoke('app:relaunch'),
 
   onPanelState: (cb) => ipcRenderer.on('panel:state', (_e, v) => cb(v)),
   onEdgeHover: (cb) => ipcRenderer.on('panel:edgeHover', (_e, v) => cb(v)),

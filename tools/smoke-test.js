@@ -341,6 +341,21 @@ function pushWindows(pid, dx) {
     await evalInPage(ws, 'activeTab().fontSize = null; applySettings(); flushSave(); true');
     await sleep(300);
 
+    // ── 그래픽 가속 (기본 끔, 바꾸면 다시 켜야 적용) ──
+    check('기본은 그래픽 가속 없이 실행된다', (await evalInPage(ws, 'window.sideMemo.gpuRunning()')) === false);
+    const gpuUi = (on) => evalInPage(ws, `(() => { openSettingsSheet(); syncSettingsUI();
+      const el = document.querySelector('#gpu-accel');
+      if (${on} !== null) { el.checked = ${on}; el.dispatchEvent(new Event('change', { bubbles: true })); }
+      return JSON.stringify({ checked: el.checked, hint: !document.querySelector('#gpu-restart').hidden,
+        setting: state.settings.gpuAcceleration }); })()`).then(JSON.parse);
+    const gp0 = await gpuUi(null);
+    check('설정 화면에 꺼짐으로 보이고 안내는 없다', !gp0.checked && !gp0.hint, JSON.stringify(gp0));
+    const gp1 = await gpuUi(true);
+    check('켜면 저장되고 다시 켜야 적용된다고 안내한다', gp1.setting === true && gp1.hint, JSON.stringify(gp1));
+    const gp2 = await gpuUi(false);
+    check('도로 끄면 안내가 사라진다', gp2.setting === false && !gp2.hint, JSON.stringify(gp2));
+    await evalInPage(ws, "document.querySelector('#settings-close').click(); true");
+
     // ── 첨부 우클릭 메뉴 ───────────────────────────────
     const menu = await evalInPage(ws, `
       (async () => {

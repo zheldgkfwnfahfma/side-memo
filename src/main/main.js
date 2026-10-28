@@ -109,6 +109,19 @@ function migrateOldProfile() {
   console.log('이전 메모를 side-memo 로 옮겼습니다.');
 }
 
+/*
+ * 그래픽 가속은 앱이 준비되기 전에만 끌 수 있어서, 저장소를 열기 전에 설정만 먼저 읽는다.
+ * 메모 앱은 글자와 단색만 그리므로 기본은 끈다 — GPU 프로세스가 수십~백여 MB 를 먹는다.
+ */
+function gpuWanted() {
+  try {
+    const data = JSON.parse(fs.readFileSync(path.join(readDataDir(), 'data.json'), 'utf8'));
+    return !!(data.settings && data.settings.gpuAcceleration === true);
+  } catch { return false; }   // 처음 켜거나 읽지 못하면 기본값(끔)
+}
+const GPU_ON = gpuWanted();
+if (!GPU_ON) app.disableHardwareAcceleration();
+
 // 이미지를 file:// 대신 전용 스킴으로 넘긴다. 렌더러가 임의 로컬 파일에 접근하지 못한다.
 protocol.registerSchemesAsPrivileged([
   { scheme: 'sidememo-img', privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -1469,6 +1482,8 @@ function registerIpc() {
   });
 
   ipcMain.handle('app:quit', () => quitApp());
+  ipcMain.handle('app:gpu', () => GPU_ON);   // 지금 실행 중인 상태 (설정을 바꿔도 다시 켜야 바뀐다)
+  ipcMain.handle('app:relaunch', async () => { app.relaunch(); await quitApp(); });
   ipcMain.handle('app:flushed', (_e, id) => { const done = flushWaiters.get(id); if (done) done(); });
 
   ipcMain.handle('update:state', () => (updater ? updater.state() : { status: 'off', current: app.getVersion() }));

@@ -22,6 +22,7 @@ const FONTS = [
 ];
 
 let state = null;
+let gpuRunning = null;   // 이번 실행에서 그래픽 가속을 쓰고 있는지 (메인에게 받는다)
 let expanded = false;
 let pinned = false;
 let overTabs = false;          // 접힌 상태에서 커서가 탭 띠 위에 있는지
@@ -1658,6 +1659,9 @@ function syncSettingsUI() {
   $('#update-default-time').value = s.updateTime || '18:00';
   $('#update-default-row').hidden = (s.updateMode || 'ask') !== 'time';
   $('#wheel-font').checked = s.wheelFontSize !== false;
+  $('#gpu-accel').checked = s.gpuAcceleration === true;
+  // 지금 실행 중인 상태와 설정이 다르면 '다시 켜야 적용' 안내를 띄운다
+  $('#gpu-restart').hidden = gpuRunning === null || gpuRunning === (s.gpuAcceleration === true);
   $('#free-layout').checked = s.freeTabLayout !== false;
   for (const b of document.querySelectorAll('[data-vis]')) {
     b.classList.toggle('on', b.dataset.vis === (s.tabVisibility || 'always'));
@@ -1916,6 +1920,9 @@ function bindSettings() {
   });
   $('#wheel-font').addEventListener('change', (e) => saveSettings({ wheelFontSize: e.target.checked }));
   $('#startup').addEventListener('change', (e) => saveSettings({ launchOnStartup: e.target.checked }));
+  $('#gpu-accel').addEventListener('change', (e) => { saveSettings({ gpuAcceleration: e.target.checked }); syncSettingsUI(); });
+  $('#gpu-relaunch').addEventListener('click', () => api.relaunch());
+  api.gpuRunning().then((v) => { gpuRunning = v; if (state) syncSettingsUI(); });
 }
 
 // ─────────────────────────────────────────── 날짜·시간 넣기 (F5)

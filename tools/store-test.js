@@ -153,6 +153,7 @@ function tempDir() {
   const fresh = new Store(tempDir()).get().settings;
   check('처음 설치하면 켤 때 한 번 확인', fresh.updateCheck === 'launch' && fresh.updateCheckHours === 4
     && fresh.updateCheckTime === '09:00', JSON.stringify([fresh.updateCheck, fresh.updateCheckHours, fresh.updateCheckTime]));
+  check('처음 설치하면 그래픽 가속은 꺼져 있다 (메모리 절약)', fresh.gpuAcceleration === false);
 }
 
 for (const d of dirs) {
