@@ -14,11 +14,12 @@
  */
 const { app } = require('electron');
 const { autoUpdater } = require('electron-updater');
-const { planOnDownloaded, decideAtTime, shortError } = require('./update-schedule');
+const {
+  planOnDownloaded, decideAtTime, shortError, checkMode, checkOnLaunch, dueCheck,
+} = require('./update-schedule');
 
-const FIRST_CHECK_MS = 30 * 1000;            // 켜자마자는 바쁘니 조금 뒤에
-const CHECK_EVERY_MS = 4 * 60 * 60 * 1000;   // 그 뒤로는 4시간마다
-const CLOCK_TICK_MS = 30 * 1000;             // 정한 시각이 됐는지 보는 주기
+const FIRST_CHECK_MS = 30 * 1000;            // 켤 때 확인: 켜자마자는 바쁘니 조금 뒤에
+const CLOCK_TICK_MS = 30 * 1000;             // 정한 간격·시각이 됐는지 보는 주기
 
 /**
  * @param {object} o
@@ -78,7 +79,7 @@ function createUpdater({ getSettings, isBusy, beforeInstall, onChange, onReady, 
   });
 
   async function check({ manual = false } = {}) {
-    if (!manual && getSettings().updateAutoCheck === false) return false;
+    if (!manual && checkMode(getSettings()) === 'off') return false;
     if (['checking', 'downloading', 'ready', 'installing'].includes(state.status)) return false;
     try {
       await autoUpdater.checkForUpdates();
@@ -109,14 +110,28 @@ function createUpdater({ getSettings, isBusy, beforeInstall, onChange, onReady, 
   /*
    * 정한 시각이 됐는지는 짧은 주기로 시계를 보고 판단한다.
    * 긴 setTimeout 하나로 걸면 PC 가 절전에 들어갔을 때 시각이 어긋난다.
+   *   - 받아 둔 업데이트를 적용할 시각이 됐는지
+   *   - 다시 확인할 간격·시각이 됐는지 (설정이 '켤 때 한 번'이면 다시 확인하지 않는다)
    */
+  let launchDone = false;   // 켤 때 확인을 마쳤는지 (그 전엔 간격 확인을 하지 않는다)
+
   function tick() {
-    if (state.status !== 'ready' || state.applyAt == null) return;
     const now = new Date();
-    if (now.getTime() < state.applyAt) return;
-    const d = decideAtTime(isBusy(), now);
-    if (d.apply) applyNow();
-    else set({ applyAt: d.retryAt });   // 메모를 쓰는 중이면 10분 미룬다
+    if (state.status === 'ready' && state.applyAt != null && now.getTime() >= state.applyAt) {
+      const d = decideAtTime(isBusy(), now);
+      if (d.apply) applyNow();
+      else set({ applyAt: d.retryAt });   // 메모를 쓰는 중이면 10분 미룬다
+      return;
+    }
+    if (launchDone && ['idle', 'none', 'error'].includes(state.status)
+        && dueCheck(getSettings(), state.checkedAt, now)) {
+      check();
+    }
+  }
+
+  /** 지금 다시 확인할 때인지 (마지막 확인 시각을 주면 그걸로 판단한다 — 테스트용). */
+  function wouldCheck(lastAt = state.checkedAt) {
+    return dueCheck(getSettings(), lastAt, new Date());
   }
 
   /** 설정의 적용 방식이 바뀌면, 이미 받아 둔 업데이트의 계획도 다시 세운다. */
@@ -129,12 +144,15 @@ function createUpdater({ getSettings, isBusy, beforeInstall, onChange, onReady, 
   function start() {
     if (started) return;
     started = true;
-    setTimeout(() => check(), FIRST_CHECK_MS);
-    setInterval(() => check(), CHECK_EVERY_MS);
+    if (checkOnLaunch(getSettings())) {
+      setTimeout(async () => { await check(); launchDone = true; }, FIRST_CHECK_MS);
+    } else {
+      launchDone = true;   // 켤 때 확인을 안 하는 설정이면 바로 '마쳤다'로 본다
+    }
     setInterval(tick, CLOCK_TICK_MS);
   }
 
-  return { state: () => ({ ...state }), check, applyNow, applyAt, replan, tick, start };
+  return { state: () => ({ ...state }), check, applyNow, applyAt, replan, tick, start, wouldCheck };
 }
 
 module.exports = { createUpdater };

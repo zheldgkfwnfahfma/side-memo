@@ -1225,6 +1225,7 @@ function registerIpc() {
     ipcMain.handle('test:flushAll', () => flushAll());
     ipcMain.handle('test:updateTick', () => { if (updater) updater.tick(); return updater ? updater.state() : null; });
     ipcMain.handle('test:forceBusy', (_e, v) => { forceBusy = v == null ? null : !!v; return forceBusy; });
+    ipcMain.handle('test:wouldCheck', (_e, lastAt) => (updater ? updater.wouldCheck(lastAt) : null));
     ipcMain.handle('test:collapse', (_e, id) => { slideTo(id, false); return true; });
     ipcMain.handle('test:setHiddenAll', (_e, v) => setHiddenAll(v));
   }

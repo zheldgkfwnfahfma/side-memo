@@ -1428,7 +1428,7 @@ function updateStatusText(st) {
   switch (st.status) {
     case 'off': return st.current ? `${st.current} · 설치한 앱에서만 확인합니다` : '';
     case 'checking': return '확인 중…';
-    case 'none': return `최신 버전입니다 (${st.current})`;
+    case 'none': return `최신 버전입니다 (${st.current})${st.checkedAt ? ` · ${describeAt(st.checkedAt)} 확인` : ''}`;
     case 'downloading': return `${st.version} 받는 중 ${st.percent || 0}%`;
     case 'ready': return `${st.version} 준비됨`;
     case 'installing': return `${st.version} 적용 중…`;
@@ -1646,7 +1646,12 @@ function syncSettingsUI() {
   $('#opacity').value = Math.round(s.opacity * 100);
   $('#opacity-val').textContent = `${Math.round(s.opacity * 100)}%`;
   $('#peek-hover').checked = s.peekOnHover;
-  $('#update-auto').checked = s.updateAutoCheck !== false;
+  const checkMode = ['launch', 'interval', 'daily', 'off'].includes(s.updateCheck) ? s.updateCheck : 'launch';
+  $('#update-check-mode').value = checkMode;
+  $('#update-check-hours').value = String(s.updateCheckHours || 4);
+  $('#update-check-time').value = s.updateCheckTime || '09:00';
+  $('#update-interval-row').hidden = checkMode !== 'interval';
+  $('#update-daily-row').hidden = checkMode !== 'daily';
   for (const b of document.querySelectorAll('[data-umode]')) {
     b.classList.toggle('on', b.dataset.umode === (s.updateMode || 'ask'));
   }
@@ -1894,7 +1899,11 @@ function bindSettings() {
   $('#peek-hover').addEventListener('change', (e) => saveSettings({ peekOnHover: e.target.checked }));
 
   // 업데이트
-  $('#update-auto').addEventListener('change', (e) => saveSettings({ updateAutoCheck: e.target.checked }));
+  $('#update-check-mode').addEventListener('change', (e) => { saveSettings({ updateCheck: e.target.value }); syncSettingsUI(); });
+  $('#update-check-hours').addEventListener('change', (e) => saveSettings({ updateCheckHours: Number(e.target.value) }));
+  $('#update-check-time').addEventListener('change', (e) => {
+    if (/^\d{2}:\d{2}$/.test(e.target.value)) saveSettings({ updateCheckTime: e.target.value });
+  });
   for (const b of document.querySelectorAll('[data-umode]')) {
     b.addEventListener('click', () => { saveSettings({ updateMode: b.dataset.umode }); syncSettingsUI(); });
   }

@@ -50,7 +50,8 @@ Electron 은 `devDependencies` 이고, 빌드 시 런타임 바이너리로만 �
 
 ## 네트워크
 
-앱이 스스로 접속하는 곳은 **업데이트 확인** 하나뿐이며, 설정에서 끌 수 있습니다.
+앱이 스스로 접속하는 곳은 **업데이트 확인** 하나뿐입니다. 기본은 앱을 켤 때 한 번이며,
+설정에서 간격·시각을 정하거나 끌 수 있습니다.
 
 - `https://github.com/zheldgkfwnfahfma/side-memo/releases/latest/download/latest.yml` — 최신 버전 번호
 - 새 버전이 있을 때만 같은 경로의 `SideMemo-Setup-<버전>.exe` — 설치본

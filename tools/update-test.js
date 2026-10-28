@@ -4,6 +4,7 @@
  */
 const {
   isValidTime, nextAt, planOnDownloaded, decideAtTime, describeAt, BUSY_RETRY_MS,
+  checkMode, checkOnLaunch, dueCheck,
 } = require('../src/main/update-schedule');
 
 const results = [];
@@ -58,6 +59,29 @@ check('메모를 쓰는 중이면 10분 미룬다', !busy.apply && busy.retryAt 
 // ── 표시 ──
 check('오늘 시각 표시', describeAt(at(2026, 10, 28, 18, 0).getTime(), morning) === '오늘 18:00');
 check('내일 시각 표시', describeAt(at(2026, 10, 29, 7, 5).getTime(), morning) === '내일 07:05');
+
+// ── 언제 새 버전을 확인할지 ──
+const H = 60 * 60 * 1000;
+const noon = at(2026, 10, 28, 12, 0);
+check('기본은 켤 때 한 번', checkMode({}) === 'launch' && checkOnLaunch({}));
+check('켤 때 한 번이면 켜져 있는 동안 다시 확인하지 않는다', !dueCheck({ updateCheck: 'launch' }, noon.getTime() - 48 * H, noon));
+check('0.6.0 에서 자동 확인을 꺼 둔 사람은 그대로 끔', checkMode({ updateAutoCheck: false }) === 'off');
+check('0.6.0 에서 켜 둔 사람은 새 기본값(켤 때 한 번)으로', checkMode({ updateAutoCheck: true }) === 'launch');
+check('확인하지 않음이면 켤 때도 안 한다', !checkOnLaunch({ updateCheck: 'off' }) && !dueCheck({ updateCheck: 'off' }, null, noon));
+
+const every4 = { updateCheck: 'interval', updateCheckHours: 4 };
+check('간격: 4시간이 지났으면 확인', dueCheck(every4, noon.getTime() - 5 * H, noon));
+check('간격: 아직 안 지났으면 기다린다', !dueCheck(every4, noon.getTime() - 1 * H, noon));
+check('간격: 켤 때도 확인한다', checkOnLaunch(every4));
+check('간격 값이 이상하면 4시간으로', dueCheck({ updateCheck: 'interval', updateCheckHours: 7 }, noon.getTime() - 4 * H, noon)
+  && !dueCheck({ updateCheck: 'interval', updateCheckHours: 7 }, noon.getTime() - 3 * H, noon));
+
+const daily9 = { updateCheck: 'daily', updateCheckTime: '09:00' };
+check('매일: 그 시각이 지났고 그 뒤로 확인 안 했으면 확인', dueCheck(daily9, at(2026, 10, 28, 8, 0).getTime(), noon));
+check('매일: 그 시각 뒤에 이미 확인했으면 안 한다', !dueCheck(daily9, at(2026, 10, 28, 9, 30).getTime(), noon));
+check('매일: 아직 그 시각 전이면 기다린다', !dueCheck(daily9, at(2026, 10, 27, 9, 0).getTime(), at(2026, 10, 28, 8, 0)));
+check('매일: 절전으로 그 시각을 넘겼어도 깨어나면 확인', dueCheck(daily9, at(2026, 10, 27, 9, 0).getTime(), at(2026, 10, 28, 14, 0)));
+check('매일: 시각이 틀렸으면 확인하지 않는다', !dueCheck({ updateCheck: 'daily', updateCheckTime: 'xx' }, null, noon));
 
 const failed = results.filter((r) => !r).length;
 console.log(`\n${results.length - failed}/${results.length} 통과`);

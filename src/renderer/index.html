@@ -228,7 +228,8 @@
           <ul>
             <li>새 버전이 나오면 뒤에서 받아 두고 <b>알림</b>으로 알려 줍니다. 헤더에 <b>업데이트</b> 표시도 생깁니다.</li>
             <li><b>지금 재시작</b> · <b>시간 정하기</b> · <b>나중에</b>(앱을 끌 때) 중에 고르면 됩니다.</li>
-            <li>설정에서 '정한 시각에 적용'이나 '끌 때만'으로 바꾸거나, 자동 확인을 끌 수 있습니다.</li>
+            <li>새 버전 확인은 기본으로 <b>앱을 켤 때 한 번</b>입니다. 설정에서 간격마다·매일 정한 시각·확인 안 함으로 바꿀 수 있습니다.</li>
+            <li>받은 뒤 적용 방식도 설정에서 '정한 시각에 적용'이나 '끌 때만'으로 바꿀 수 있습니다.</li>
           </ul>
         </section>
 
@@ -465,7 +466,28 @@
 
         <div class="field" id="update-field">
           <label>업데이트 <span class="val" id="update-status"></span></label>
-          <label class="check"><input id="update-auto" type="checkbox" /> 새 버전 자동 확인 (4시간마다)</label>
+          <p class="sub-label">언제 새 버전을 확인할까요</p>
+          <select id="update-check-mode">
+            <option value="launch">앱을 켤 때 한 번 (기본)</option>
+            <option value="interval">켤 때 + 정해진 간격마다</option>
+            <option value="daily">켤 때 + 매일 정한 시각에</option>
+            <option value="off">자동으로 확인하지 않음 ('지금 확인'으로만)</option>
+          </select>
+          <div class="update-default-time" id="update-interval-row">
+            <select id="update-check-hours">
+              <option value="1">1시간마다</option>
+              <option value="2">2시간마다</option>
+              <option value="4">4시간마다</option>
+              <option value="8">8시간마다</option>
+              <option value="12">12시간마다</option>
+              <option value="24">하루마다</option>
+            </select>
+          </div>
+          <div class="update-default-time" id="update-daily-row">
+            매일 <input id="update-check-time" type="time" /> 에 확인
+          </div>
+
+          <p class="sub-label">새 버전을 받으면</p>
           <div class="seg col" id="update-mode">
             <button data-umode="ask">받으면 물어보기</button>
             <button data-umode="time">정한 시각에 적용</button>

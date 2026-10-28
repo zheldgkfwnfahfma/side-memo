@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('sideMemo', {
     flushAll: () => ipcRenderer.invoke('test:flushAll'),
     updateTick: () => ipcRenderer.invoke('test:updateTick'),
     forceBusy: (v) => ipcRenderer.invoke('test:forceBusy', v),
+    wouldCheck: (lastAt) => ipcRenderer.invoke('test:wouldCheck', lastAt),
     collapse: (id) => ipcRenderer.invoke('test:collapse', id),
     setHiddenAll: (v) => ipcRenderer.invoke('test:setHiddenAll', v),
   },

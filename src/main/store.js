@@ -38,7 +38,9 @@ class Store {
         textColor: '#4C1D95',
         peekOnHover: true,        // 탭 제목에 마우스를 올리면 열기
         wheelFontSize: true,      // Ctrl+휠로 글자 크기 조절
-        updateAutoCheck: true,    // 새 버전을 자동으로 확인 (GitHub 릴리스 주소만)
+        updateCheck: 'launch',    // 새 버전 확인: 'launch' 켤 때 한 번 | 'interval' 간격마다 | 'daily' 매일 | 'off'
+        updateCheckHours: 4,      // 'interval' 일 때 간격(시간)
+        updateCheckTime: '09:00', // 'daily' 일 때 확인 시각
         updateMode: 'ask',        // 'ask' 받으면 물어보기 | 'time' 정한 시각에 | 'quit' 끌 때만
         updateTime: '18:00',      // 'time' 일 때 적용할 시각
         tabVisibility: 'always',  // 'always' 항상 보임 | 'hover' 가장자리에 마우스를 대면 | 'hidden' 완전히 숨김
@@ -124,6 +126,12 @@ class Store {
     if (src.closeMode === undefined && 'autoHide' in src) {
       settings.closeMode = src.autoHide ? 'mouse' : 'manual';
     }
+    // 0.6.0 의 '자동 확인 켜기/끄기'를 확인 방식으로 옮긴다. 켜 둔 사람은 새 기본값(켤 때 한 번)으로.
+    if (src.updateCheck === undefined && 'updateAutoCheck' in src) {
+      settings.updateCheck = src.updateAutoCheck === false ? 'off' : 'launch';
+    }
+    delete settings.updateAutoCheck;
+
     // 가장자리·모니터는 설정이 아니라 dock 의 속성이 되었다.
     delete settings.autoHide;
     delete settings.edge;

@@ -1679,6 +1679,50 @@ function pushWindows(pid, dx) {
     check('켜고 30초쯤 뒤 스스로 한 번 확인한다 (바로 확인하지 않는다)',
       firstAfterSec != null && firstAfterSec >= 25 && firstAfterSec <= 60, `첫 확인 ${firstAfterSec}초 뒤`);
     await evalInPage(ws, 'window.sideMemo.updateCheck(); true');   // 이미 받아 두었으면 아무 일도 안 한다
+
+    // ── 언제 확인할지 (설정) ──
+    const H = 60 * 60 * 1000;
+    const wc = (lastAt) => evalInPage(ws, `window.sideMemo.test.wouldCheck(${lastAt})`);
+    const ui = () => evalInPage(ws, `JSON.stringify({
+      mode: document.querySelector('#update-check-mode').value,
+      hoursShown: !document.querySelector('#update-interval-row').hidden,
+      dailyShown: !document.querySelector('#update-daily-row').hidden })`).then(JSON.parse);
+    await evalInPage(ws, 'openSettingsSheet(); syncSettingsUI(); true');
+    const u0 = await ui();
+    check('기본은 켤 때 한 번 확인', u0.mode === 'launch' && !u0.hoursShown && !u0.dailyShown, JSON.stringify(u0));
+    check('켤 때 한 번이면 이틀이 지나도 다시 확인하지 않는다', (await wc(Date.now() - 48 * H)) === false);
+
+    const pickMode = (v) => evalInPage(ws, `(() => { const el = document.querySelector('#update-check-mode');
+      el.value = '${v}'; el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    await pickMode('interval');
+    await evalInPage(ws, `(() => { const el = document.querySelector('#update-check-hours');
+      el.value = '2'; el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    await sleep(300);
+    const u1 = await ui();
+    check('간격을 고르면 간격 칸이 보인다', u1.mode === 'interval' && u1.hoursShown && !u1.dailyShown, JSON.stringify(u1));
+    check('간격(2시간)이 지나면 다시 확인한다', (await wc(Date.now() - 3 * H)) === true && (await wc(Date.now() - 1 * H)) === false);
+
+    await pickMode('daily');
+    await evalInPage(ws, `(() => { const t = new Date(Date.now() - 60 * 1000);
+      const el = document.querySelector('#update-check-time');
+      el.value = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+      el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    await sleep(300);
+    const u2 = await ui();
+    check('매일을 고르면 시각 칸이 보인다', u2.mode === 'daily' && u2.dailyShown && !u2.hoursShown, JSON.stringify(u2));
+    check('매일: 정한 시각이 지났고 그 뒤로 확인 안 했으면 확인한다',
+      (await wc(Date.now() - 3 * H)) === true && (await wc(Date.now())) === false);
+
+    await pickMode('off');
+    await sleep(300);
+    check('확인하지 않음이면 다시 확인하지 않는다', (await wc(Date.now() - 48 * H)) === false);
+
+    await pickMode('launch');
+    await sleep(300);
+    const savedCheck = JSON.parse(fs.readFileSync(path.join(PROFILE, 'data.json'), 'utf8')).settings;
+    check('고른 확인 방식이 저장된다', savedCheck.updateCheck === 'launch' && savedCheck.updateCheckHours === 2, JSON.stringify(
+      [savedCheck.updateCheck, savedCheck.updateCheckHours, savedCheck.updateCheckTime]));
+    await evalInPage(ws, "document.querySelector('#settings-close').click(); true");
     for (let i = 0; i < 60 && upSt.status !== 'ready'; i++) { await sleep(250); upSt = await ust(); }
     check('새 버전을 찾아 받아 둔다', upSt.status === 'ready' && upSt.version === '99.0.0', JSON.stringify(upSt));
 

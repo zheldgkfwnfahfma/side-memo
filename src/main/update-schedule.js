@@ -81,4 +81,49 @@ function shortError(err) {
   return '확인하지 못했습니다';
 }
 
-module.exports = { shortError, MODES, BUSY_RETRY_MS, isValidTime, nextAt, planOnDownloaded, decideAtTime, describeAt };
+/*
+ * ─── 언제 새 버전을 확인할지 (설정의 updateCheck) ───
+ *   'launch'   : 켤 때 한 번 (기본)
+ *   'interval' : 켤 때 + 정해 둔 간격(updateCheckHours)마다
+ *   'daily'    : 켤 때 + 매일 정한 시각(updateCheckTime)에
+ *   'off'      : 자동으로 확인하지 않는다 ('지금 확인' 버튼으로만)
+ */
+const CHECK_MODES = ['launch', 'interval', 'daily', 'off'];
+const CHECK_HOURS = [1, 2, 4, 8, 12, 24];
+
+/** 확인 방식. 0.6.0 의 켜기/끄기(updateAutoCheck)에서 넘어온 설정도 읽는다. */
+function checkMode(settings) {
+  if (CHECK_MODES.includes(settings.updateCheck)) return settings.updateCheck;
+  if (settings.updateAutoCheck === false) return 'off';
+  return 'launch';
+}
+
+/** 켤 때 확인할지. */
+function checkOnLaunch(settings) {
+  return checkMode(settings) !== 'off';
+}
+
+/**
+ * 켜져 있는 동안 지금 다시 확인할 때인지.
+ * @param {number|null} lastAt 마지막으로 확인을 마친 시각(ms). 켤 때 확인도 포함한다
+ */
+function dueCheck(settings, lastAt, now) {
+  const mode = checkMode(settings);
+  if (mode === 'interval') {
+    const h = CHECK_HOURS.includes(Number(settings.updateCheckHours)) ? Number(settings.updateCheckHours) : 4;
+    return lastAt == null || now.getTime() - lastAt >= h * 60 * 60 * 1000;
+  }
+  if (mode === 'daily') {
+    if (!isValidTime(settings.updateCheckTime)) return false;
+    const [hh, mm] = settings.updateCheckTime.split(':').map(Number);
+    const todayAt = new Date(now.getTime());
+    todayAt.setHours(hh, mm, 0, 0);
+    // 오늘 그 시각이 지났고, 그 뒤로 아직 확인하지 않았으면 (절전으로 그 시각을 넘겼어도 깨어나면 확인)
+    return now.getTime() >= todayAt.getTime() && (lastAt == null || lastAt < todayAt.getTime());
+  }
+  return false;   // 'launch' 는 켤 때만, 'off' 는 하지 않는다
+}
+
+module.exports = {
+  CHECK_MODES, CHECK_HOURS, checkMode, checkOnLaunch, dueCheck,
+  shortError, MODES, BUSY_RETRY_MS, isValidTime, nextAt, planOnDownloaded, decideAtTime, describeAt };

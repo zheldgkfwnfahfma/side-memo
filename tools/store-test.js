@@ -134,6 +134,27 @@ function tempDir() {
   check('없는 메모는 옮기지 않는다', s.moveTab(a.id, 'nope', b.id).ok === false);
 }
 
+// ── 0.6.0 의 '자동 확인 켜기/끄기'를 새 확인 방식으로 옮기기 ──
+{
+  const migrate = (value) => {
+    const dir = tempDir();
+    const s0 = new Store(dir);
+    const raw = JSON.parse(JSON.stringify(s0.get()));
+    raw.settings.updateAutoCheck = value;
+    delete raw.settings.updateCheck;
+    fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify(raw), 'utf8');
+    return new Store(dir).get().settings;
+  };
+  const wasOn = migrate(true);
+  check('자동 확인을 켜 두었으면 새 기본값(켤 때 한 번)으로', wasOn.updateCheck === 'launch', wasOn.updateCheck);
+  const wasOff = migrate(false);
+  check('자동 확인을 꺼 두었으면 그대로 끔', wasOff.updateCheck === 'off', wasOff.updateCheck);
+  check('옛 설정 이름은 남기지 않는다', !('updateAutoCheck' in wasOn) && !('updateAutoCheck' in wasOff));
+  const fresh = new Store(tempDir()).get().settings;
+  check('처음 설치하면 켤 때 한 번 확인', fresh.updateCheck === 'launch' && fresh.updateCheckHours === 4
+    && fresh.updateCheckTime === '09:00', JSON.stringify([fresh.updateCheck, fresh.updateCheckHours, fresh.updateCheckTime]));
+}
+
 for (const d of dirs) {
   try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* 임시 폴더 */ }
 }
