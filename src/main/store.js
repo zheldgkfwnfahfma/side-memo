@@ -38,6 +38,9 @@ class Store {
         textColor: '#4C1D95',
         peekOnHover: true,        // 탭 제목에 마우스를 올리면 열기
         wheelFontSize: true,      // Ctrl+휠로 글자 크기 조절
+        updateAutoCheck: true,    // 새 버전을 자동으로 확인 (GitHub 릴리스 주소만)
+        updateMode: 'ask',        // 'ask' 받으면 물어보기 | 'time' 정한 시각에 | 'quit' 끌 때만
+        updateTime: '18:00',      // 'time' 일 때 적용할 시각
         tabVisibility: 'always',  // 'always' 항상 보임 | 'hover' 가장자리에 마우스를 대면 | 'hidden' 완전히 숨김
         freeTabLayout: true,      // 탭을 원하는 높이에 하나씩 둘 수 있게
         closeMode: 'mouse',       // 'mouse' 마우스가 벗어나면 | 'focus' 다른 창 클릭 시 | 'manual' 직접 닫을 때만

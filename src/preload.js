@@ -9,6 +9,17 @@ contextBridge.exposeInMainWorld('sideMemo', {
   setPanel: (expanded, opts) => ipcRenderer.invoke('panel:set', expanded, opts),
   setInteractive: (value) => ipcRenderer.invoke('panel:setInteractive', value),
   setTabDragging: (value) => ipcRenderer.invoke('tabs:dragging', value),
+
+  // 업데이트
+  updateState: () => ipcRenderer.invoke('update:state'),
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateApplyNow: () => ipcRenderer.invoke('update:applyNow'),
+  updateApplyAt: (ms) => ipcRenderer.invoke('update:applyAt', ms),
+  onUpdateState: (cb) => ipcRenderer.on('update:state', (_e, v) => cb(v)),
+  onOpenUpdate: (cb) => ipcRenderer.on('ui:open-update', () => cb()),
+  // 끄기·업데이트 직전 '지금 저장' 요청과 그 답
+  onFlush: (cb) => ipcRenderer.on('app:flush', (_e, id) => cb(id)),
+  flushed: (id) => ipcRenderer.invoke('app:flushed', id),
   // 테스트 전용 (임시 프로필로 띄웠을 때만 메인에 받는 쪽이 있다)
   test: {
     fakeDisplays: (fake, silent) => ipcRenderer.invoke('test:fakeDisplays', fake, silent),
@@ -16,6 +27,9 @@ contextBridge.exposeInMainWorld('sideMemo', {
     toggleDock: (id) => ipcRenderer.invoke('test:toggleDock', id),
     settleMs: (ms) => ipcRenderer.invoke('test:settleMs', ms),
     forgetSession: () => ipcRenderer.invoke('test:forgetSession'),
+    flushAll: () => ipcRenderer.invoke('test:flushAll'),
+    updateTick: () => ipcRenderer.invoke('test:updateTick'),
+    forceBusy: (v) => ipcRenderer.invoke('test:forceBusy', v),
     collapse: (id) => ipcRenderer.invoke('test:collapse', id),
     setHiddenAll: (v) => ipcRenderer.invoke('test:setHiddenAll', v),
   },

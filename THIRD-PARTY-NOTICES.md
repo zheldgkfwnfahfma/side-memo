@@ -13,7 +13,30 @@
 
 ## 이 앱이 직접 쓰는 npm 런타임 의존성
 
-없습니다. `npm ls --omit=dev` 결과가 비어 있습니다.
+자동 업데이트를 위해 `electron-updater` 와 그 의존성이 설치본에 들어갑니다.
+모두 상업적 사용이 가능한 허용형 라이선스이며, 각 패키지의 라이선스 전문은 설치본 안
+(`resources/app.asar` 의 `node_modules/<패키지>/LICENSE`)에 그대로 들어 있습니다.
+
+| 패키지 | 버전 | 라이선스 |
+|---|---|---|
+| electron-updater | 6.8.11 | MIT |
+| builder-util-runtime | 9.7.0 | MIT |
+| debug | 4.4.3 | MIT |
+| ms | 2.1.3 | MIT |
+| fs-extra | 10.1.0 | MIT |
+| graceful-fs | 4.2.11 | ISC |
+| jsonfile | 6.2.1 | MIT |
+| universalify | 2.0.1 | MIT |
+| js-yaml | 4.3.1 | MIT |
+| argparse | 2.0.1 | Python-2.0 (PSF) |
+| lazy-val | 1.0.5 | MIT |
+| lodash.escaperegexp | 4.1.2 | MIT |
+| lodash.isequal | 4.5.0 | MIT |
+| sax | 1.6.1 | BlueOak-1.0.0 |
+| semver | 7.7.4 | ISC |
+| tiny-typed-emitter | 2.1.0 | MIT |
+
+목록은 `npm ls --omit=dev --all` 기준입니다.
 Electron 은 `devDependencies` 이고, 빌드 시 런타임 바이너리로만 들어갑니다.
 
 ## 폰트
@@ -27,6 +50,15 @@ Electron 은 `devDependencies` 이고, 빌드 시 런타임 바이너리로만 �
 
 ## 네트워크
 
-앱은 어떤 서버에도 접속하지 않습니다. 메모 안의 링크를 `Ctrl+클릭` 했을 때만
-기본 브라우저로 해당 주소를 엽니다. 수집·전송하는 데이터가 없고 모든 내용은
-`%APPDATA%\side-memo\` 아래에만 저장됩니다.
+앱이 스스로 접속하는 곳은 **업데이트 확인** 하나뿐이며, 설정에서 끌 수 있습니다.
+
+- `https://github.com/zheldgkfwnfahfma/side-memo/releases/latest/download/latest.yml` — 최신 버전 번호
+- 새 버전이 있을 때만 같은 경로의 `SideMemo-Setup-<버전>.exe` — 설치본
+- GitHub 는 이 두 요청을 자기 파일 저장소(`release-assets.githubusercontent.com`)로 넘겨 줍니다
+
+요청에 담기는 것은 `User-Agent: electron-builder` 같은 고정 값뿐입니다.
+업데이트 도구가 설치마다 붙이는 번호(`x-user-staging-id`)는 모든 설치에서 같은 0 값으로 덮어써서,
+요청만으로 설치를 서로 구분할 수 없습니다. 메모 내용은 보내지 않습니다.
+
+그 밖에는 메모 안의 링크를 `Ctrl+클릭` 했을 때 기본 브라우저로 그 주소를 여는 것뿐입니다.
+모든 메모는 `%APPDATA%\side-memo\` (또는 설정에서 고른 저장 위치) 아래에만 저장됩니다.

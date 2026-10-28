@@ -19,6 +19,7 @@
       <div class="head-actions">
         <button id="btn-search" class="icon-btn" title="모든 메모에서 찾기 (Ctrl+F)">🔍</button>
         <button id="btn-pin" class="icon-btn" title="고정 (닫히지 않게)">📌</button>
+        <button id="btn-update" class="update-badge" title="새 버전이 준비됐습니다" hidden>업데이트</button>
         <button id="btn-help" class="icon-btn help-btn" title="도움말 (F1)">?</button>
         <button id="btn-settings" class="icon-btn" title="설정">⚙</button>
         <button id="btn-close" class="icon-btn" title="닫기">✕</button>
@@ -117,6 +118,37 @@
       </div>
     </div>
 
+    <!-- ─────────── 업데이트 시트 ─────────── -->
+    <div id="update-sheet" class="sheet" hidden>
+      <div class="sheet-head">
+        <strong>업데이트</strong>
+        <button id="update-close" class="icon-btn" title="닫기 (Esc)">✕</button>
+      </div>
+      <div class="sheet-body update-body">
+        <p class="update-lead"><b id="update-version"></b> 이(가) 준비됐습니다.</p>
+        <p class="hint">지금 쓰는 버전: <span id="update-current"></span></p>
+
+        <button id="update-now" class="update-primary">지금 재시작해서 적용</button>
+
+        <div class="update-when">
+          <label for="update-time">시간 정하기</label>
+          <div class="update-when-row">
+            <input id="update-time" type="time" />
+            <button id="update-at">이 시간에 적용</button>
+          </div>
+        </div>
+
+        <button id="update-later" class="update-secondary">나중에 (앱을 끌 때 적용)</button>
+
+        <p id="update-planned" class="update-planned" hidden>
+          <span id="update-planned-text"></span>
+          <button id="update-cancel-at" class="link-btn">취소</button>
+        </p>
+
+        <p class="hint">적용하기 직전에 메모를 모두 저장합니다. 정한 시간에 메모를 펼쳐 쓰고 있으면 10분 미뤄집니다.</p>
+      </div>
+    </div>
+
     <!-- ─────────── 도움말 시트 ─────────── -->
     <div id="help-sheet" class="sheet" hidden>
       <div class="sheet-head">
@@ -188,6 +220,15 @@
             <li>입력이 멈추면 <b>0.4초 뒤 자동 저장</b>. 따로 저장할 필요가 없습니다.</li>
             <li>지운 메모는 <b>휴지통</b>에 30일, 데이터는 <b>주기적으로 자동 백업</b>됩니다.</li>
             <li>저장 위치를 OneDrive 같은 폴더로 옮기면 <b>다른 PC와 같은 메모</b>를 볼 수 있습니다.</li>
+          </ul>
+        </section>
+
+        <section class="help-card">
+          <h4>업데이트</h4>
+          <ul>
+            <li>새 버전이 나오면 뒤에서 받아 두고 <b>알림</b>으로 알려 줍니다. 헤더에 <b>업데이트</b> 표시도 생깁니다.</li>
+            <li><b>지금 재시작</b> · <b>시간 정하기</b> · <b>나중에</b>(앱을 끌 때) 중에 고르면 됩니다.</li>
+            <li>설정에서 '정한 시각에 적용'이나 '끌 때만'으로 바꾸거나, 자동 확인을 끌 수 있습니다.</li>
           </ul>
         </section>
 
@@ -420,6 +461,24 @@
             <button id="backup-open">백업 폴더 열기</button>
           </div>
           <p class="hint" id="backup-last">실행할 때 한 번, 이후 주기마다 저장됩니다. 최근 12개를 보관합니다.</p>
+        </div>
+
+        <div class="field" id="update-field">
+          <label>업데이트 <span class="val" id="update-status"></span></label>
+          <label class="check"><input id="update-auto" type="checkbox" /> 새 버전 자동 확인 (4시간마다)</label>
+          <div class="seg col" id="update-mode">
+            <button data-umode="ask">받으면 물어보기</button>
+            <button data-umode="time">정한 시각에 적용</button>
+            <button data-umode="quit">앱을 끌 때만 적용</button>
+          </div>
+          <div class="update-default-time" id="update-default-row">
+            <input id="update-default-time" type="time" /> 에 적용
+          </div>
+          <div class="btn-row">
+            <button id="update-check">지금 확인</button>
+          </div>
+          <p class="hint">확인할 때는 GitHub 의 이 앱 릴리스 주소(github.com/zheldgkfwnfahfma/side-memo)에만 접속합니다.
+            메모나 사용자를 알아볼 정보는 보내지 않습니다.</p>
         </div>
 
         <div class="sheet-foot">

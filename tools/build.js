@@ -82,6 +82,22 @@ const ok = run('npx', ['electron-builder', '--win', '--x64', '--publish', 'never
  */
 const SETUP = `SideMemo-Setup-${require('../package.json').version}.exe`;
 
+/*
+ * 자동 업데이트에 필요한 파일이 만들어졌는지 확인한다.
+ *   app-update.yml : 설치된 앱이 '어디서 확인할지' 읽는 파일 (설치본 안에 들어간다)
+ *   latest.yml     : 릴리스에 함께 올라가 '최신 버전이 무엇인지' 알려 주는 파일
+ * 하나라도 없으면 그 설치본은 다음 업데이트를 못 받는다. 조용히 넘어가지 않고 실패로 끊는다.
+ */
+if (ok) {
+  const outDir = path.join(buildDir, 'dist');
+  const needed = [path.join(outDir, 'win-unpacked', 'resources', 'app-update.yml'), path.join(outDir, 'latest.yml')];
+  const missing = needed.filter((p) => !fs.existsSync(p));
+  if (missing.length) {
+    console.error(`\n자동 업데이트 파일이 만들어지지 않았습니다: ${missing.map((p) => path.basename(p)).join(', ')}`);
+    process.exit(1);
+  }
+}
+
 // 빌드가 실패했으면 아무것도 가져오지 않는다. 반쪽짜리 결과물이 남는 게 제일 위험하다.
 if (ok && tmp) {
   const src = path.join(tmp, 'dist', SETUP);

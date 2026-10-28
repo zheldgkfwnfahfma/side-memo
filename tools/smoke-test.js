@@ -101,7 +101,33 @@ function pushWindows(pid, dx) {
 
 (async () => {
   console.log('임시 프로필:', PROFILE, '\n');
-  const child = spawn(ELECTRON, ['.', `--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`], {
+  // ── 가짜 업데이트 서버 ──
+  // 앱이 '99.0.0' 이 나왔다고 보게 한다. 들어온 요청은 전부 남겨, 무엇을 보내는지도 확인한다.
+  const FEED_PORT = 9455;
+  const FAKE_SETUP = Buffer.from('fake installer for test ' + Date.now());
+  const feedRequests = [];
+  const feed = http.createServer((req, res) => {
+    feedRequests.push({ path: req.url, headers: req.headers, at: Date.now() });
+    if (req.url.startsWith('/latest.yml')) {
+      const sha512 = require('crypto').createHash('sha512').update(FAKE_SETUP).digest('base64');
+      res.writeHead(200, { 'Content-Type': 'text/yaml' });
+      res.end([
+        'version: 99.0.0', 'files:', '  - url: SideMemo-Setup-99.0.0.exe', `    sha512: ${sha512}`,
+        `    size: ${FAKE_SETUP.length}`, 'path: SideMemo-Setup-99.0.0.exe', `sha512: ${sha512}`,
+        "releaseDate: '2026-10-28T00:00:00.000Z'", ''].join('\n'));
+    } else if (req.url.startsWith('/SideMemo-Setup-99.0.0.exe')) {
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': FAKE_SETUP.length });
+      res.end(FAKE_SETUP);
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+  await new Promise((r) => feed.listen(FEED_PORT, '127.0.0.1', r));
+
+  const appStartedAt = Date.now();
+  const child = spawn(ELECTRON, ['.', `--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`,
+    `--update-feed=http://127.0.0.1:${FEED_PORT}`], {
     cwd: ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -1640,6 +1666,135 @@ function pushWindows(pid, dx) {
     await setTopo(null);
     await sleep(800);
 
+    // ── 업데이트 (가짜 업데이트 서버로 처음부터 끝까지) ─────────
+    // 테스트 시작 때 띄운 가짜 서버에 '99.0.0' 을 올려 두었다. 앱이 확인 → 받기 → 알림까지 가는지,
+    // 그리고 어떤 주소로 무엇을 보내는지(요청 기록)도 확인한다.
+    const ust = () => evalInPage(ws, '(async () => JSON.stringify(await window.sideMemo.updateState()))()').then(JSON.parse);
+    // 이 지점은 앱을 켜고 30초가 넘게 지난 뒤라, 첫 자동 확인이 스스로 돌았어야 한다
+    let upSt = await ust();
+    if (!feedRequests.length) {
+      for (let i = 0; i < 160 && !feedRequests.length; i++) await sleep(250);   // 혹시 일찍 왔으면 기다린다
+    }
+    const firstAfterSec = feedRequests.length ? Math.round((feedRequests[0].at - appStartedAt) / 1000) : null;
+    check('켜고 30초쯤 뒤 스스로 한 번 확인한다 (바로 확인하지 않는다)',
+      firstAfterSec != null && firstAfterSec >= 25 && firstAfterSec <= 60, `첫 확인 ${firstAfterSec}초 뒤`);
+    await evalInPage(ws, 'window.sideMemo.updateCheck(); true');   // 이미 받아 두었으면 아무 일도 안 한다
+    for (let i = 0; i < 60 && upSt.status !== 'ready'; i++) { await sleep(250); upSt = await ust(); }
+    check('새 버전을 찾아 받아 둔다', upSt.status === 'ready' && upSt.version === '99.0.0', JSON.stringify(upSt));
+
+    const asked = feedRequests.map((r) => r.path.split('?')[0]);
+    check('최신 버전 정보(latest.yml)와 설치본만 요청한다',
+      asked.length === 2 && asked[0] === '/latest.yml' && asked[1] === '/SideMemo-Setup-99.0.0.exe', JSON.stringify(asked));
+    const STANDARD = ['host', 'user-agent', 'accept-encoding', 'accept-language', 'connection', 'accept',
+      'cache-control', 'pragma', 'sec-fetch-site', 'sec-fetch-mode', 'sec-fetch-dest',
+      'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform', 'x-user-staging-id'];
+    const extraHeaders = [...new Set(feedRequests.flatMap((r) => Object.keys(r.headers)))].filter((h) => !STANDARD.includes(h));
+    check('쿠키·인증 같은 다른 정보는 보내지 않는다', extraHeaders.length === 0, JSON.stringify(extraHeaders));
+    const ids = [...new Set(feedRequests.map((r) => r.headers['x-user-staging-id']).filter(Boolean))];
+    check('설치를 구분할 번호를 보내지 않는다 (모두 같은 0 값)',
+      ids.length <= 1 && (!ids[0] || /^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(ids[0])), JSON.stringify(ids));
+    check('User-Agent 는 고정 문구', feedRequests.every((r) => r.headers['user-agent'] === 'electron-builder'),
+      JSON.stringify([...new Set(feedRequests.map((r) => r.headers['user-agent']))]));
+
+    const shown = await evalInPage(ws, `JSON.stringify({
+      badge: !document.querySelector('#btn-update').hidden,
+      status: document.querySelector('#update-status').textContent })`).then(JSON.parse);
+    check('헤더에 업데이트 표시가 생긴다', shown.badge, JSON.stringify(shown));
+    check('설정에 준비됐다고 보인다', /99\.0\.0 준비됨/.test(shown.status), shown.status);
+
+    // 표시를 누르면 업데이트 화면
+    const sheet = await evalInPage(ws, `(() => {
+      setPanel(true, { focus: true });
+      document.querySelector('#btn-update').click();
+      return JSON.stringify({ open: !document.querySelector('#update-sheet').hidden,
+        version: document.querySelector('#update-version').textContent,
+        time: document.querySelector('#update-time').value });
+    })()`).then(JSON.parse);
+    check('표시를 누르면 업데이트 화면이 열린다', sheet.open && sheet.version === '99.0.0', JSON.stringify(sheet));
+    check('시간 칸은 설정의 기본 시각으로 채워져 있다', sheet.time === '18:00', sheet.time);
+
+    // 시간 정하기
+    const pick = await evalInPage(ws, `(async () => {
+      const t = new Date(Date.now() + 2 * 60 * 60 * 1000);
+      const v = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+      document.querySelector('#update-time').value = v;
+      document.querySelector('#update-at').click();
+      await new Promise(r => setTimeout(r, 300));
+      const st = await window.sideMemo.updateState();
+      return JSON.stringify({ v, applyAt: st.applyAt, closed: document.querySelector('#update-sheet').hidden,
+        planned: document.querySelector('#update-planned-text').textContent,
+        plannedShown: !document.querySelector('#update-planned').hidden });
+    })()`).then(JSON.parse);
+    const pickAt = new Date(pick.applyAt);
+    check('시간을 정하면 그 시각으로 예약된다',
+      `${String(pickAt.getHours()).padStart(2, '0')}:${String(pickAt.getMinutes()).padStart(2, '0')}` === pick.v, JSON.stringify(pick));
+    check('예약하면 화면이 닫히고 예약 내용이 보인다', pick.closed && pick.plannedShown && /적용됩니다/.test(pick.planned), JSON.stringify(pick));
+
+    const cancelled = await evalInPage(ws, `(async () => {
+      document.querySelector('#update-cancel-at').click();
+      await new Promise(r => setTimeout(r, 300));
+      return JSON.stringify(await window.sideMemo.updateState());
+    })()`).then(JSON.parse);
+    check('예약을 취소할 수 있다 (끌 때 적용으로)', cancelled.applyAt === null && cancelled.status === 'ready', JSON.stringify(cancelled));
+
+    // 나중에
+    const later = await evalInPage(ws, `(async () => {
+      document.querySelector('#update-sheet').hidden = false;
+      document.querySelector('#update-later').click();
+      await new Promise(r => setTimeout(r, 300));
+      const st = await window.sideMemo.updateState();
+      return JSON.stringify({ applyAt: st.applyAt, status: st.status, closed: document.querySelector('#update-sheet').hidden });
+    })()`).then(JSON.parse);
+    check('나중에: 예약 없이 끌 때 적용으로 둔다', later.applyAt === null && later.status === 'ready' && later.closed, JSON.stringify(later));
+
+    // 설정에서 '정한 시각에 적용' 으로 바꾸면 받아 둔 업데이트도 그 시각으로 다시 잡힌다
+    const modeTime = await evalInPage(ws, `(async () => {
+      saveSettings({ updateTime: '07:30' });
+      document.querySelector('[data-umode="time"]').click();
+      await new Promise(r => setTimeout(r, 400));
+      const st = await window.sideMemo.updateState();
+      const d = new Date(st.applyAt);
+      return JSON.stringify({ at: String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'),
+        rowShown: !document.querySelector('#update-default-row').hidden });
+    })()`).then(JSON.parse);
+    check('설정을 정한 시각으로 바꾸면 그 시각으로 다시 잡힌다', modeTime.at === '07:30' && modeTime.rowShown, JSON.stringify(modeTime));
+    const modeQuit = await evalInPage(ws, `(async () => {
+      document.querySelector('[data-umode="quit"]').click();
+      await new Promise(r => setTimeout(r, 400));
+      return JSON.stringify(await window.sideMemo.updateState());
+    })()`).then(JSON.parse);
+    check('끌 때만으로 바꾸면 예약이 풀린다', modeQuit.applyAt === null, JSON.stringify(modeQuit));
+
+    // 정한 시각이 됐는데 메모를 펼쳐 쓰는 중이면 끊지 않고 10분 미룬다
+    const postponed = await evalInPage(ws, `(async () => {
+      await window.sideMemo.test.forceBusy(true);   // 메모를 펼쳐 쓰는 중
+      await window.sideMemo.updateApplyAt(Date.now() - 1000);
+      const st = await window.sideMemo.test.updateTick();
+      await window.sideMemo.test.forceBusy(null);
+      return JSON.stringify({ status: st.status, installed: st.installRequested, inMin: Math.round((st.applyAt - Date.now()) / 60000) });
+    })()`).then(JSON.parse);
+    check('정한 시각에 메모를 쓰는 중이면 10분 미룬다',
+      postponed.status === 'ready' && !postponed.installed && postponed.inMin >= 9 && postponed.inMin <= 10, JSON.stringify(postponed));
+
+    // 지금 재시작: 쓰던 글자가 저장되기 전(0.4초 안)이어도 저장한 뒤 적용한다
+    const applied = await evalInPage(ws, `(async () => {
+      saveSettings({ updateMode: 'ask', updateTime: '18:00' });
+      editor.innerHTML = '<div>업데이트 직전에 쓴 글</div>';
+      queueSave();                       // 아직 저장 전 (0.4초 뒤 저장 예정)
+      document.querySelector('#update-sheet').hidden = false;
+      document.querySelector('#update-now').click();
+      for (let i = 0; i < 40; i++) {
+        const st = await window.sideMemo.updateState();
+        if (st.installRequested) return JSON.stringify(st);
+        await new Promise(r => setTimeout(r, 100));
+      }
+      return JSON.stringify(await window.sideMemo.updateState());
+    })()`).then(JSON.parse);
+    check('지금 재시작을 누르면 적용한다', applied.status === 'installing' && applied.installRequested, JSON.stringify(applied));
+    const savedBeforeInstall = JSON.parse(fs.readFileSync(path.join(PROFILE, 'data.json'), 'utf8'))
+      .docks.some((d) => d.tabs.some((t) => /업데이트 직전에 쓴 글/.test(t.html || '')));
+    check('적용 직전에 쓰던 글을 저장한다', savedBeforeInstall);
+
     // ── 렌더러 오류 ───────────────────────────────────
     const errors = logs.join('').match(/\[renderer\].*(Uncaught|Error)/g);
     check('렌더러 오류 없음', !errors, errors ? errors.join(' / ') : '');
@@ -1649,6 +1804,7 @@ function pushWindows(pid, dx) {
 
   ws.close();
   child.kill();
+  feed.close();
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} 통과`);

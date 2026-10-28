@@ -351,6 +351,44 @@ button { font-family: inherit; cursor: pointer; }
 .sheet-head .icon-btn { color: #1f2937; }
 .sheet-body { flex: 1; overflow-y: auto; padding: 12px 14px 16px; }
 
+/* ── 업데이트 ───────────────────────────────────────── */
+/* 헤더의 표시. 새 버전이 준비됐을 때만 보인다 */
+.update-badge {
+  border: 0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  margin-right: 2px;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.update-badge:hover { background: #6d28d9; }
+.update-body { display: flex; flex-direction: column; gap: 10px; }
+.update-lead { margin: 0; font-size: 14px; }
+.update-body .hint { margin: 0; color: #6b7280; }
+.update-primary, .update-secondary, .update-when-row button {
+  border: 0;
+  border-radius: 9px;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.update-primary { background: #7c3aed; color: #fff; }
+.update-primary:hover { background: #6d28d9; }
+.update-secondary, .update-when-row button { background: #f1f0fb; color: #4c1d95; }
+.update-secondary:hover, .update-when-row button:hover { background: #ede9fe; }
+.update-when { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid #ede9fe; border-radius: 10px; }
+.update-when label { font-weight: 700; color: #4c1d95; }
+.update-when-row { display: flex; gap: 8px; }
+.update-when-row input { flex: 1; padding: 6px 8px; border: 1px solid #ddd; border-radius: 7px; }
+.update-planned { margin: 0; padding: 8px 10px; border-radius: 9px; background: #f5f3ff; color: #4c1d95; font-weight: 700; }
+.link-btn { border: 0; background: none; color: #7c3aed; text-decoration: underline; cursor: pointer; font-size: 12px; }
+.update-default-time { margin: 8px 0 0; }
+.update-default-time input { padding: 5px 8px; border: 1px solid #ddd; border-radius: 7px; }
+
 /* ── 도움말 ─────────────────────────────────────────── */
 /* 헤더의 ? 버튼. 다른 아이콘(이모지)과 굵기를 맞춘다 */
 .help-btn { font-weight: 800; font-size: 14px; }

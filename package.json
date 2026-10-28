@@ -1,13 +1,13 @@
 {
   "name": "side-memo",
   "productName": "사이드 메모",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "화면 가장자리에서 나오는 탭형 스티커 메모",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "test": "node tools/share-test.js && node tools/store-test.js && node tools/display-test.js && node tools/smoke-test.js",
+    "test": "node tools/share-test.js && node tools/store-test.js && node tools/display-test.js && node tools/update-test.js && node tools/smoke-test.js",
     "build": "node tools/build.js"
   },
   "author": "",
@@ -49,11 +49,20 @@
       ],
       "language": "1042",
       "artifactName": "SideMemo-Setup-${version}.${ext}"
-    }
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://github.com/zheldgkfwnfahfma/side-memo/releases/latest/download"
+      }
+    ]
   },
   "devDependencies": {
     "electron": "^32.0.0",
     "electron-builder": "^26.15.3",
     "ws": "^8.21.3"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
   }
 }

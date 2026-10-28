@@ -719,6 +719,7 @@ api.onPanelState(({ expanded: e }) => {
     closeAllPopovers();
     $('#settings').hidden = true;
     $('#help-sheet').hidden = true;
+    $('#update-sheet').hidden = true;
   }
 });
 
@@ -1380,6 +1381,7 @@ function openHelpSheet() {
   closeAllPopovers();
   $('#search').hidden = true;
   $('#settings').hidden = true;
+  $('#update-sheet').hidden = true;
   $('#help-sheet').hidden = false;
   $('#help-sheet .sheet-body').scrollTop = 0;
 }
@@ -1393,10 +1395,110 @@ $('#btn-help').addEventListener('click', toggleHelpSheet);
 $('#help-close').addEventListener('click', () => { $('#help-sheet').hidden = true; });
 $('#open-help').addEventListener('click', openHelpSheet);
 
+/*
+ * ─── 업데이트 ───
+ * 새 버전은 메인이 뒤에서 받아 둔다. 다 받으면 헤더에 '업데이트' 표시가 생기고,
+ * 눌러서 지금 재시작 / 시간 정하기 / 나중에(끌 때) 중에 고른다.
+ */
+let updateState = { status: 'off' };
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+/** 'HH:MM' 이 오늘 아직 안 지났으면 오늘, 지났으면 내일 (main 의 update-schedule 과 같은 규칙). */
+function nextAtLocal(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const now = new Date();
+  const at = new Date(now.getTime());
+  at.setHours(h, m, 0, 0);
+  if (at.getTime() <= now.getTime()) at.setDate(at.getDate() + 1);
+  return at.getTime();
+}
+
+function describeAt(ms) {
+  const d = new Date(ms);
+  const now = new Date();
+  const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  if (d.toDateString() === now.toDateString()) return `오늘 ${hm}`;
+  const tmr = new Date(now.getTime());
+  tmr.setDate(tmr.getDate() + 1);
+  return d.toDateString() === tmr.toDateString() ? `내일 ${hm}` : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+
+function updateStatusText(st) {
+  switch (st.status) {
+    case 'off': return st.current ? `${st.current} · 설치한 앱에서만 확인합니다` : '';
+    case 'checking': return '확인 중…';
+    case 'none': return `최신 버전입니다 (${st.current})`;
+    case 'downloading': return `${st.version} 받는 중 ${st.percent || 0}%`;
+    case 'ready': return `${st.version} 준비됨`;
+    case 'installing': return `${st.version} 적용 중…`;
+    case 'error': return `${st.error || '확인하지 못했습니다'} (지금 ${st.current})`;
+    default: return st.current ? `지금 ${st.current}` : '';
+  }
+}
+
+function renderUpdate(st) {
+  updateState = st || { status: 'off' };
+  const ready = updateState.status === 'ready';
+  $('#btn-update').hidden = !ready;
+  $('#update-status').textContent = updateStatusText(updateState);
+  $('#update-version').textContent = updateState.version || '';
+  $('#update-current').textContent = updateState.current || '';
+  const planned = ready && updateState.applyAt;
+  $('#update-planned').hidden = !planned;
+  if (planned) $('#update-planned-text').textContent = `${describeAt(updateState.applyAt)} 에 적용됩니다`;
+  $('#update-now').disabled = !ready;
+  $('#update-check').disabled = updateState.status === 'off'
+    || ['checking', 'downloading', 'installing'].includes(updateState.status);
+}
+
+function openUpdateSheet() {
+  closeAllPopovers();
+  $('#search').hidden = true;
+  $('#settings').hidden = true;
+  $('#help-sheet').hidden = true;
+  $('#update-time').value = (state && state.settings.updateTime) || '18:00';
+  $('#update-sheet').hidden = false;
+}
+
+$('#btn-update').addEventListener('click', openUpdateSheet);
+$('#update-close').addEventListener('click', () => { $('#update-sheet').hidden = true; });
+$('#update-now').addEventListener('click', async () => {
+  $('#update-now').disabled = true;
+  toast('메모를 저장하고 새 버전으로 다시 켭니다…');
+  await api.updateApplyNow();
+});
+$('#update-at').addEventListener('click', async () => {
+  const v = $('#update-time').value;
+  if (!/^\d{2}:\d{2}$/.test(v)) { toast('적용할 시간을 골라 주세요'); return; }
+  const ms = nextAtLocal(v);
+  await api.updateApplyAt(ms);
+  $('#update-sheet').hidden = true;
+  toast(`${describeAt(ms)} 에 적용합니다`);
+});
+$('#update-later').addEventListener('click', async () => {
+  await api.updateApplyAt(null);
+  $('#update-sheet').hidden = true;
+  toast('앱을 끌 때 적용합니다. 헤더의 업데이트 표시로 언제든 바꿀 수 있습니다');
+});
+$('#update-cancel-at').addEventListener('click', async () => {
+  await api.updateApplyAt(null);
+  toast('예약을 취소했습니다. 앱을 끌 때 적용됩니다');
+});
+
+api.onUpdateState(renderUpdate);
+api.onOpenUpdate(() => (updateState.status === 'ready' ? openUpdateSheet() : openSettingsSheet()));
+
+// 끄기·업데이트 직전: 쓰던 내용을 지금 저장하고 끝났다고 답한다
+api.onFlush(async (id) => {
+  try { if (state) await flushSave(); } finally { api.flushed(id); }
+});
+
 function openSettingsSheet() {
   closeAllPopovers();
   $('#search').hidden = true;
   $('#help-sheet').hidden = true;
+  $('#update-sheet').hidden = true;
   $('#settings').hidden = false;
   // 휴지통·백업·저장 위치는 열 때마다 최신 상태를 다시 읽는다.
   renderTrash();
@@ -1544,6 +1646,12 @@ function syncSettingsUI() {
   $('#opacity').value = Math.round(s.opacity * 100);
   $('#opacity-val').textContent = `${Math.round(s.opacity * 100)}%`;
   $('#peek-hover').checked = s.peekOnHover;
+  $('#update-auto').checked = s.updateAutoCheck !== false;
+  for (const b of document.querySelectorAll('[data-umode]')) {
+    b.classList.toggle('on', b.dataset.umode === (s.updateMode || 'ask'));
+  }
+  $('#update-default-time').value = s.updateTime || '18:00';
+  $('#update-default-row').hidden = (s.updateMode || 'ask') !== 'time';
   $('#wheel-font').checked = s.wheelFontSize !== false;
   $('#free-layout').checked = s.freeTabLayout !== false;
   for (const b of document.querySelectorAll('[data-vis]')) {
@@ -1784,6 +1892,19 @@ function bindSettings() {
   $('#hide-now').addEventListener('click', () => api.hideAll());
 
   $('#peek-hover').addEventListener('change', (e) => saveSettings({ peekOnHover: e.target.checked }));
+
+  // 업데이트
+  $('#update-auto').addEventListener('change', (e) => saveSettings({ updateAutoCheck: e.target.checked }));
+  for (const b of document.querySelectorAll('[data-umode]')) {
+    b.addEventListener('click', () => { saveSettings({ updateMode: b.dataset.umode }); syncSettingsUI(); });
+  }
+  $('#update-default-time').addEventListener('change', (e) => {
+    if (/^\d{2}:\d{2}$/.test(e.target.value)) saveSettings({ updateTime: e.target.value });
+  });
+  $('#update-check').addEventListener('click', async () => {
+    await api.updateCheck();
+    if (updateState.status === 'off') toast('설치한 앱에서만 확인합니다');
+  });
   $('#wheel-font').addEventListener('change', (e) => saveSettings({ wheelFontSize: e.target.checked }));
   $('#startup').addEventListener('change', (e) => saveSettings({ launchOnStartup: e.target.checked }));
 }
@@ -1807,7 +1928,8 @@ function stamp({ date = true, time = true } = {}) {
 }
 
 function insertStamp(opts) {
-  if (!$('#settings').hidden || !$('#search').hidden || !$('#help-sheet').hidden || askResolve) return false;
+  if (!$('#settings').hidden || !$('#search').hidden || !$('#help-sheet').hidden
+      || !$('#update-sheet').hidden || askResolve) return false;
   if (!expanded) setPanel(true, { focus: true });
 
   editor.focus();
@@ -1837,6 +1959,7 @@ function insertStamp(opts) {
     closeAllPopovers();
     $('#settings').hidden = true;
     $('#help-sheet').hidden = true;
+    $('#update-sheet').hidden = true;
     sheet.hidden = false;
     input.value = '';
     list.textContent = '';
@@ -2182,6 +2305,7 @@ function prettyAccel(accel) {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    if (!$('#update-sheet').hidden) { $('#update-sheet').hidden = true; return; }
     if (!$('#help-sheet').hidden) { $('#help-sheet').hidden = true; return; }
     if (!$('#search').hidden) { $('#search').hidden = true; return; }
     if (!$('#settings').hidden) { $('#settings').hidden = true; return; }
@@ -2259,4 +2383,5 @@ api.onSelectTab((tabId) => selectTab(tabId));
   renderDisplayOptions(await api.listDisplays());
   renderDockList(state.docks);
   syncSettingsUI();
+  renderUpdate(await api.updateState());
 })();

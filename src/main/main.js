@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, Tray, Menu, ipcMain, screen, dialog,
-  nativeImage, shell, protocol, net, globalShortcut,
+  nativeImage, shell, protocol, net, globalShortcut, Notification,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -9,6 +9,7 @@ const { pathToFileURL } = require('url');
 const { Store } = require('./store');
 const { pickDisplay, hintOf, refreshDocks, isWaiting, confirmableId } = require('./displays');
 const { createShare, htmlToText, safeFileName, uniqueStoredName } = require('./share');
+const { createUpdater } = require('./updater');
 
 const TAB_W = 34;              // 화면 가장자리에 항상 남아 있는 탭 스트립 폭
 // 커서가 벗어난 뒤 접히기까지의 유예(ms). 설정에서 고른다.
@@ -582,6 +583,9 @@ function refreshTrayMenu() {
         },
       ],
     })),
+    ...(updater && updater.state().status === 'ready'
+      ? [{ type: 'separator' }, { label: `업데이트 적용 (${updater.state().version})…`, click: () => openUpdate() }]
+      : []),
     { type: 'separator' },
     {
       label: '잠시 숨기기', type: 'checkbox', checked: hiddenAll,
@@ -597,8 +601,93 @@ function refreshTrayMenu() {
       },
     },
     { type: 'separator' },
-    { label: '종료', click: () => { quitting = true; app.quit(); } },
+    { label: '종료', click: () => quitApp() },
   ]));
+}
+
+/*
+ * ─── 끄기 전에 메모 저장 ───
+ * 렌더러는 글자를 치고 0.4초 뒤에 저장한다. 그 사이에 앱을 끄거나 업데이트로 다시 켜면
+ * 마지막 몇 글자가 날아갈 수 있다. 모든 창에 '지금 저장'을 시키고 끝났다는 답을 기다린다.
+ */
+let flushSeq = 0;
+const flushWaiters = new Map();
+
+function flushAll(timeoutMs = 3000) {
+  const jobs = [];
+  for (const pane of panes.values()) {
+    if (pane.win.isDestroyed()) continue;
+    const id = ++flushSeq;
+    jobs.push(new Promise((resolve) => {
+      const timer = setTimeout(() => { flushWaiters.delete(id); resolve(false); }, timeoutMs);
+      flushWaiters.set(id, () => { clearTimeout(timer); flushWaiters.delete(id); resolve(true); });
+      pane.win.webContents.send('app:flush', id);
+    }));
+  }
+  return Promise.all(jobs);
+}
+
+async function quitApp() {
+  await flushAll();
+  quitting = true;
+  app.quit();
+}
+
+/*
+ * ─── 업데이트 ───
+ * 확인하는 곳은 GitHub 의 이 앱 릴리스 주소 하나뿐이다 (updater.js 참고).
+ * 포장된 앱(설치본)에서만 켠다. 테스트에서는 가짜 서버를 바라보게 한다.
+ */
+let updater = null;
+let forceBusy = null;   // 테스트 전용: '메모를 쓰는 중'을 강제로 정한다 (창 포커스는 테스트에서 믿을 수 없다)
+const testUpdateFeed = customProfile
+  && (process.argv.find((a) => a.startsWith('--update-feed=')) || '').slice('--update-feed='.length);
+
+function broadcastUpdate() {
+  const st = updater ? updater.state() : { status: 'off', current: app.getVersion() };
+  for (const pane of panes.values()) {
+    if (!pane.win.isDestroyed()) pane.win.webContents.send('update:state', st);
+  }
+}
+
+/** 업데이트 화면을 연다 (알림·트레이에서 눌렀을 때). */
+function openUpdate() {
+  const id = lastActiveDockId || (panes.keys().next().value);
+  const pane = panes.get(id);
+  if (!pane) return;
+  slideTo(id, true, { focus: true });
+  pane.win.webContents.send('ui:open-update');
+}
+
+function startUpdater() {
+  if (!app.isPackaged && !testUpdateFeed) return;   // 개발 중에는 끈다
+  let test = null;
+  if (testUpdateFeed) {
+    const configPath = path.join(USER_DATA, 'test-app-update.yml');
+    fs.writeFileSync(configPath,
+      `provider: generic\nurl: ${testUpdateFeed}\nupdaterCacheDirName: side-memo-updater-test\n`, 'utf8');
+    test = { feedUrl: testUpdateFeed, configPath };
+  }
+  updater = createUpdater({
+    getSettings: () => store.get().settings,
+    // 메모를 펼쳐 놓고 있으면 정한 시각이 돼도 끊지 않는다
+    isBusy: () => (forceBusy != null ? forceBusy
+      : [...panes.values()].some((p) => p.expanded && !p.win.isDestroyed() && p.win.isFocused())),
+    beforeInstall: () => flushAll(),
+    onChange: () => { broadcastUpdate(); refreshTrayMenu(); },
+    onReady: (st) => {
+      if (!Notification.isSupported()) return;
+      const s = store.get().settings;
+      const body = s.updateMode === 'time' && st.applyAt
+        ? `${new Date(st.applyAt).toTimeString().slice(0, 5)} 에 적용됩니다. 눌러서 바꿀 수 있습니다.`
+        : '눌러서 지금 적용하거나 적용할 시간을 고르세요.';
+      const n = new Notification({ title: `사이드 메모 ${st.version} 이(가) 준비됐습니다`, body, silent: false });
+      n.on('click', () => openUpdate());
+      n.show();
+    },
+    test,
+  });
+  updater.start();
 }
 
 function toggleDock(dockId) {
@@ -907,6 +996,9 @@ function registerIpc() {
     if (settings.backupHours !== undefined && settings.backupHours !== prev.backupHours) {
       startBackups();
     }
+    if (updater && (settings.updateMode !== prev.updateMode || settings.updateTime !== prev.updateTime)) {
+      updater.replan();
+    }
     repositionAll();
     refreshTrayMenu();
     broadcastSettings();
@@ -1130,6 +1222,9 @@ function registerIpc() {
     ipcMain.handle('test:toggleDock', (_e, id) => { toggleDock(id); return true; });
     ipcMain.handle('test:settleMs', (_e, ms) => { SETTLE_MS = Number(ms) || 0; return SETTLE_MS; });
     ipcMain.handle('test:forgetSession', () => { sessionIds.clear(); return true; });
+    ipcMain.handle('test:flushAll', () => flushAll());
+    ipcMain.handle('test:updateTick', () => { if (updater) updater.tick(); return updater ? updater.state() : null; });
+    ipcMain.handle('test:forceBusy', (_e, v) => { forceBusy = v == null ? null : !!v; return forceBusy; });
     ipcMain.handle('test:collapse', (_e, id) => { slideTo(id, false); return true; });
     ipcMain.handle('test:setHiddenAll', (_e, v) => setHiddenAll(v));
   }
@@ -1372,7 +1467,13 @@ function registerIpc() {
     return { ok: true, memos };
   });
 
-  ipcMain.handle('app:quit', () => { quitting = true; app.quit(); });
+  ipcMain.handle('app:quit', () => quitApp());
+  ipcMain.handle('app:flushed', (_e, id) => { const done = flushWaiters.get(id); if (done) done(); });
+
+  ipcMain.handle('update:state', () => (updater ? updater.state() : { status: 'off', current: app.getVersion() }));
+  ipcMain.handle('update:check', () => (updater ? updater.check({ manual: true }) : false));
+  ipcMain.handle('update:applyNow', () => (updater ? updater.applyNow() : false));
+  ipcMain.handle('update:applyAt', (_e, ms) => (updater ? updater.applyAt(ms) : false));
 }
 
 // ---------------------------------------------------------------- 부팅
@@ -1387,6 +1488,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    app.setAppUserModelId('com.sidememo.app');   // 윈도우 알림에 필요 (package.json 의 appId 와 같게)
     migrateOldProfile();
     store = new Store(readDataDir());
     share = createShare({ imageDir: store.imageDir, fileDir: store.fileDir, uuid: () => crypto.randomUUID() });
@@ -1411,6 +1513,7 @@ if (!app.requestSingleInstanceLock()) {
     startCursorWatch();
     startPlacementWatch();
     handleDisplaysChanged();   // 배치가 가라앉는 대로(약 3초) 창을 띄운다
+    startUpdater();
     startFileWatch();
 
     const failed = applyShortcuts();
